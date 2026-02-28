@@ -44,7 +44,12 @@
       "remote": true,
     },
   ],
-
+  "routes": [
+    {
+      "pattern": "mcp.juancruz.com.ar/*",
+      "zone_name": "juancruz.com.ar",
+    },
+  ],
   /**
    * Smart Placement
    * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
