@@ -31,17 +31,15 @@
   },
   "d1_databases": [
     {
-      "binding": "coordinator_db",
+      "binding": "COORDINATOR_DB",
       "database_name": "coordinator-db",
       "database_id": "e618c021-df2f-4f51-ae0f-08e581b9a476",
-      "remote": true,
     },
   ],
   "r2_buckets": [
     {
       "bucket_name": "coordinator-bucket",
-      "binding": "coordinator_bucket",
-      "remote": true,
+      "binding": "COORDINATOR_BUCKET",
     },
   ],
   "routes": [
