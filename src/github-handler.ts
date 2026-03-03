@@ -13,12 +13,11 @@ const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
 app.get("/authorize", async (c) => {
   const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
-  const { clientId } = oauthReqInfo;
-  if (!clientId) {
+  if (!oauthReqInfo.clientId) {
     return c.text("Invalid request", 400);
   }
 
-  // Redirect to GitHub for authentication
+  // Encode the full OAuth request info into the GitHub state parameter
   const state = btoa(JSON.stringify({ oauthReqInfo }));
   const githubAuthUrl = getUpstreamAuthorizeUrl(c.env, state);
   return c.redirect(githubAuthUrl);
@@ -32,18 +31,20 @@ app.get("/callback", async (c) => {
     return c.text("Missing code or state", 400);
   }
 
-  let state: { oauthReqInfo?: AuthRequest };
+  // Decode the OAuth request info from state
+  let oauthReqInfo: AuthRequest;
   try {
-    state = JSON.parse(atob(stateParam));
+    const decoded = JSON.parse(atob(stateParam));
+    oauthReqInfo = decoded.oauthReqInfo;
   } catch (_e) {
     return c.text("Invalid state data", 400);
   }
 
-  if (!state.oauthReqInfo) {
-    return c.text("Missing OAuth request info", 400);
+  if (!oauthReqInfo || !oauthReqInfo.clientId || !oauthReqInfo.redirectUri) {
+    return c.text("Missing OAuth request info in state", 400);
   }
 
-  // Exchange the code for a GitHub access token
+  // Exchange the GitHub code for an access token
   const { accessToken } = await fetchUpstreamAuthToken(c.env, code);
   if (!accessToken) {
     return c.text("Failed to get access token from GitHub", 500);
@@ -70,14 +71,14 @@ app.get("/callback", async (c) => {
     id: number;
   };
 
-  // Complete the OAuth flow
+  // Complete the OAuth flow — pass the original oauthReqInfo back
   const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
-    request: c.req.raw,
+    request: oauthReqInfo,
     userId: user.login,
     metadata: {
       label: user.name || user.login,
     },
-    scope: state.oauthReqInfo.scope,
+    scope: oauthReqInfo.scope,
     props: {
       login: user.login,
       name: user.name,
