@@ -1,6 +1,8 @@
+import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
+import GitHubHandler from "./github-handler";
 
 // Helper: generate a short unique ID
 function genId(): string {
@@ -46,7 +48,6 @@ export class MyMCP extends McpAgent {
         const ts = now();
         let detail_ref: string | null = null;
 
-        // If detailed markdown provided, store in R2
         if (detail_md) {
           const r2Key = `projects/${PROJECT_ID}/instructions/${id}.md`;
           await env.COORDINATOR_BUCKET.put(r2Key, detail_md);
@@ -319,7 +320,6 @@ export class MyMCP extends McpAgent {
       async ({ file_path }) => {
         const env = this.env as Env;
 
-        // Look up the R2 key
         const row = await env.COORDINATOR_DB.prepare(
           "SELECT r2_key FROM project_files WHERE file_path = ?",
         )
@@ -398,18 +398,18 @@ export class MyMCP extends McpAgent {
           line_end,
         });
 
-        // Store change detail in R2
         const r2Key = `projects/${PROJECT_ID}/instructions/${id}.json`;
         await env.COORDINATOR_BUCKET.put(r2Key, changeDetail);
 
         const title = `Code change: ${change_type} on ${file_path}`;
-        const content = description || `Direct ${change_type} on ${file_path}`;
+        const contentText =
+          description || `Direct ${change_type} on ${file_path}`;
 
         await env.COORDINATOR_DB.prepare(
           `INSERT INTO instructions (id, title, content, detail_ref, type, priority, status, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'direct_change', 'high', 'pending', ?, ?)`,
         )
-          .bind(id, title, content, r2Key, ts, ts)
+          .bind(id, title, contentText, r2Key, ts, ts)
           .run();
 
         return {
@@ -458,7 +458,6 @@ export class MyMCP extends McpAgent {
         const env = this.env as Env;
         const ts = now();
 
-        // Get pending instructions
         const results = await env.COORDINATOR_DB.prepare(
           "SELECT id, title, content, detail_ref, type, priority FROM instructions WHERE status = 'pending' ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 END, created_at ASC LIMIT 10",
         ).all();
@@ -476,7 +475,6 @@ export class MyMCP extends McpAgent {
           };
         }
 
-        // Mark them as in_progress
         for (const row of rows as any[]) {
           await env.COORDINATOR_DB.prepare(
             "UPDATE instructions SET status = 'in_progress', updated_at = ? WHERE id = ?",
@@ -485,7 +483,6 @@ export class MyMCP extends McpAgent {
             .run();
         }
 
-        // For instructions with detail_ref, fetch the detail
         const enriched = [];
         for (const row of rows as any[]) {
           let detail = "";
@@ -535,7 +532,6 @@ export class MyMCP extends McpAgent {
           .bind(id, instruction_id, status, summary, details || null, ts)
           .run();
 
-        // If completed, also update the instruction status
         if (status === "completed") {
           await env.COORDINATOR_DB.prepare(
             "UPDATE instructions SET status = 'completed', updated_at = ? WHERE id = ?",
@@ -580,10 +576,8 @@ export class MyMCP extends McpAgent {
           const r2Key = `projects/${PROJECT_ID}/files/${file.path}`;
           const size = new TextEncoder().encode(file.content).length;
 
-          // Upload to R2
           await env.COORDINATOR_BUCKET.put(r2Key, file.content);
 
-          // Upsert in D1
           await env.COORDINATOR_DB.prepare(
             `INSERT INTO project_files (id, file_path, r2_key, size_bytes, synced_at)
              VALUES (?, ?, ?, ?, ?)
@@ -625,7 +619,6 @@ export class MyMCP extends McpAgent {
         let count = 0;
 
         for (const file of files) {
-          // Skip common exclusions
           if (
             file.path.includes("node_modules/") ||
             file.path.includes(".next/") ||
@@ -761,29 +754,13 @@ export class MyMCP extends McpAgent {
   }
 }
 
-export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/mcp") {
-      return MyMCP.serve("/mcp").fetch(request, env, ctx);
-    }
-
-    // Simple health check
-    if (url.pathname === "/" || url.pathname === "/health") {
-      return new Response(
-        JSON.stringify({
-          status: "ok",
-          name: "CoordinatorMCP",
-          version: "2.0.0",
-          endpoints: { mcp: "/mcp" },
-        }),
-        {
-          headers: { "content-type": "application/json" },
-        },
-      );
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
-};
+// Export the OAuthProvider as the default export
+// This wraps the entire Worker with OAuth authentication
+export default new OAuthProvider({
+  apiRoute: "/mcp",
+  apiHandler: MyMCP.serve("/mcp"),
+  defaultHandler: GitHubHandler,
+  authorizeEndpoint: "/authorize",
+  tokenEndpoint: "/token",
+  clientRegistrationEndpoint: "/register",
+});

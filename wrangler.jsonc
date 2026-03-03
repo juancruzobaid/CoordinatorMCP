@@ -42,6 +42,12 @@
       "binding": "COORDINATOR_BUCKET",
     },
   ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "215eac1b64814c0d84ad6348c780671b",
+    },
+  ],
   "routes": [
     {
       "pattern": "mcp.juancruz.com.ar/*",
