@@ -14,13 +14,10 @@ function now(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19);
 }
 
-// Default project ID (single-project for now)
-const PROJECT_ID = "default";
-
 export class MyMCP extends McpAgent {
   server = new McpServer({
     name: "CoordinatorMCP",
-    version: "2.0.0",
+    version: "3.0.0",
   });
 
   async init() {
@@ -41,22 +38,29 @@ export class MyMCP extends McpAgent {
           .string()
           .optional()
           .describe("Optional detailed markdown content to store in R2"),
+        project_id: z
+          .string()
+          .optional()
+          .describe(
+            "Project identifier to isolate instructions per repo/project. Defaults to 'default'",
+          ),
       },
-      async ({ title, content, priority, type, detail_md }) => {
+      async ({ title, content, priority, type, detail_md, project_id }) => {
         const env = this.env as Env;
         const id = genId();
         const ts = now();
+        const pid = project_id || "default";
         let detail_ref: string | null = null;
 
         if (detail_md) {
-          const r2Key = `projects/${PROJECT_ID}/instructions/${id}.md`;
+          const r2Key = `projects/${pid}/instructions/${id}.md`;
           await env.COORDINATOR_BUCKET.put(r2Key, detail_md);
           detail_ref = r2Key;
         }
 
         await env.COORDINATOR_DB.prepare(
-          `INSERT INTO instructions (id, title, content, detail_ref, type, priority, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          `INSERT INTO instructions (id, title, content, detail_ref, type, priority, status, project_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
         )
           .bind(
             id,
@@ -65,6 +69,7 @@ export class MyMCP extends McpAgent {
             detail_ref,
             type || "standard",
             priority || "normal",
+            pid,
             ts,
             ts,
           )
@@ -74,7 +79,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `✅ Instruction created: [${id}] "${title}" (${priority || "normal"} priority, status: pending)`,
+              text: `✅ Instruction created: [${id}] "${title}" (${priority || "normal"} priority, project: ${pid}, status: pending)`,
             },
           ],
         };
@@ -89,19 +94,24 @@ export class MyMCP extends McpAgent {
         status: z
           .enum(["pending", "in_progress", "completed", "all"])
           .optional(),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Filter by project. Defaults to 'default'"),
       },
-      async ({ status }) => {
+      async ({ status, project_id }) => {
         const env = this.env as Env;
-        let query =
-          "SELECT id, title, type, priority, status, created_at, updated_at FROM instructions";
+        const pid = project_id || "default";
         const filterStatus = status || "all";
 
+        let query =
+          "SELECT id, title, type, priority, status, created_at, updated_at FROM instructions WHERE project_id = ?";
         if (filterStatus !== "all") {
-          query += ` WHERE status = '${filterStatus}'`;
+          query += ` AND status = '${filterStatus}'`;
         }
         query += " ORDER BY created_at DESC LIMIT 50";
 
-        const results = await env.COORDINATOR_DB.prepare(query).all();
+        const results = await env.COORDINATOR_DB.prepare(query).bind(pid).all();
         const rows = results.results || [];
 
         if (rows.length === 0) {
@@ -109,7 +119,7 @@ export class MyMCP extends McpAgent {
             content: [
               {
                 type: "text",
-                text: `No instructions found (filter: ${filterStatus})`,
+                text: `No instructions found (project: ${pid}, filter: ${filterStatus})`,
               },
             ],
           };
@@ -124,7 +134,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `📋 Instructions (${filterStatus}):\n${lines.join("\n")}`,
+              text: `📋 Instructions (project: ${pid}, ${filterStatus}):\n${lines.join("\n")}`,
             },
           ],
         };
@@ -140,18 +150,28 @@ export class MyMCP extends McpAgent {
           .string()
           .optional()
           .describe("Filter by instruction ID"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Filter by project. Defaults to 'default'"),
       },
-      async ({ instruction_id }) => {
+      async ({ instruction_id, project_id }) => {
         const env = this.env as Env;
+        const pid = project_id || "default";
+
         let query =
-          "SELECT pr.id, pr.instruction_id, pr.status, pr.summary, pr.details, pr.created_at, i.title as instruction_title FROM progress_reports pr LEFT JOIN instructions i ON pr.instruction_id = i.id";
+          "SELECT pr.id, pr.instruction_id, pr.status, pr.summary, pr.details, pr.created_at, i.title as instruction_title FROM progress_reports pr LEFT JOIN instructions i ON pr.instruction_id = i.id WHERE pr.project_id = ?";
+        const binds: any[] = [pid];
 
         if (instruction_id) {
-          query += ` WHERE pr.instruction_id = '${instruction_id}'`;
+          query += " AND pr.instruction_id = ?";
+          binds.push(instruction_id);
         }
         query += " ORDER BY pr.created_at DESC LIMIT 20";
 
-        const results = await env.COORDINATOR_DB.prepare(query).all();
+        const results = await env.COORDINATOR_DB.prepare(query)
+          .bind(...binds)
+          .all();
         const rows = results.results || [];
 
         if (rows.length === 0) {
@@ -169,7 +189,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `📊 Progress Reports:\n${lines.join("\n\n")}`,
+              text: `📊 Progress Reports (project: ${pid}):\n${lines.join("\n\n")}`,
             },
           ],
         };
@@ -268,17 +288,28 @@ export class MyMCP extends McpAgent {
           .string()
           .optional()
           .describe("Filter by path prefix, e.g. 'src/' or 'components/'"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Filter by project. Defaults to 'default'"),
       },
-      async ({ prefix }) => {
+      async ({ prefix, project_id }) => {
         const env = this.env as Env;
+        const pid = project_id || "default";
+
         let query =
-          "SELECT file_path, size_bytes, synced_at FROM project_files";
+          "SELECT file_path, size_bytes, synced_at FROM project_files WHERE project_id = ?";
+        const binds: any[] = [pid];
+
         if (prefix) {
-          query += ` WHERE file_path LIKE '${prefix}%'`;
+          query += " AND file_path LIKE ?";
+          binds.push(`${prefix}%`);
         }
         query += " ORDER BY file_path ASC LIMIT 100";
 
-        const results = await env.COORDINATOR_DB.prepare(query).all();
+        const results = await env.COORDINATOR_DB.prepare(query)
+          .bind(...binds)
+          .all();
         const rows = results.results || [];
 
         if (rows.length === 0) {
@@ -286,7 +317,7 @@ export class MyMCP extends McpAgent {
             content: [
               {
                 type: "text",
-                text: `No files found${prefix ? ` with prefix "${prefix}"` : ""}.`,
+                text: `No files found (project: ${pid}${prefix ? `, prefix: "${prefix}"` : ""}).`,
               },
             ],
           };
@@ -301,7 +332,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `📁 Project Files (${rows.length}):\n${lines.join("\n")}`,
+              text: `📁 Project Files (project: ${pid}, ${rows.length}):\n${lines.join("\n")}`,
             },
           ],
         };
@@ -316,20 +347,28 @@ export class MyMCP extends McpAgent {
         file_path: z
           .string()
           .describe("The file path as stored in project_files"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
       },
-      async ({ file_path }) => {
+      async ({ file_path, project_id }) => {
         const env = this.env as Env;
+        const pid = project_id || "default";
 
         const row = await env.COORDINATOR_DB.prepare(
-          "SELECT r2_key FROM project_files WHERE file_path = ?",
+          "SELECT r2_key FROM project_files WHERE file_path = ? AND project_id = ?",
         )
-          .bind(file_path)
+          .bind(file_path, pid)
           .first<{ r2_key: string }>();
 
         if (!row) {
           return {
             content: [
-              { type: "text", text: `❌ File not found: ${file_path}` },
+              {
+                type: "text",
+                text: `❌ File not found: ${file_path} (project: ${pid})`,
+              },
             ],
           };
         }
@@ -377,6 +416,10 @@ export class MyMCP extends McpAgent {
           .string()
           .optional()
           .describe("Description of the change"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
       },
       async ({
         file_path,
@@ -385,10 +428,12 @@ export class MyMCP extends McpAgent {
         line_start,
         line_end,
         description,
+        project_id,
       }) => {
         const env = this.env as Env;
         const id = genId();
         const ts = now();
+        const pid = project_id || "default";
 
         const changeDetail = JSON.stringify({
           file_path,
@@ -398,7 +443,7 @@ export class MyMCP extends McpAgent {
           line_end,
         });
 
-        const r2Key = `projects/${PROJECT_ID}/instructions/${id}.json`;
+        const r2Key = `projects/${pid}/instructions/${id}.json`;
         await env.COORDINATOR_BUCKET.put(r2Key, changeDetail);
 
         const title = `Code change: ${change_type} on ${file_path}`;
@@ -406,17 +451,17 @@ export class MyMCP extends McpAgent {
           description || `Direct ${change_type} on ${file_path}`;
 
         await env.COORDINATOR_DB.prepare(
-          `INSERT INTO instructions (id, title, content, detail_ref, type, priority, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'direct_change', 'high', 'pending', ?, ?)`,
+          `INSERT INTO instructions (id, title, content, detail_ref, type, priority, status, project_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'direct_change', 'high', 'pending', ?, ?, ?)`,
         )
-          .bind(id, title, contentText, r2Key, ts, ts)
+          .bind(id, title, contentText, r2Key, pid, ts, ts)
           .run();
 
         return {
           content: [
             {
               type: "text",
-              text: `✅ Code change instruction created: [${id}] ${title}`,
+              text: `✅ Code change instruction created: [${id}] ${title} (project: ${pid})`,
             },
           ],
         };
@@ -432,14 +477,22 @@ export class MyMCP extends McpAgent {
           .string()
           .describe("Document name, e.g. 'workflow-rules' or 'project-status'"),
         content: z.string().describe("The markdown content"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
       },
-      async ({ doc_name, content }) => {
+      async ({ doc_name, content, project_id }) => {
         const env = this.env as Env;
-        const r2Key = `projects/${PROJECT_ID}/docs/${doc_name}.md`;
+        const pid = project_id || "default";
+        const r2Key = `projects/${pid}/docs/${doc_name}.md`;
         await env.COORDINATOR_BUCKET.put(r2Key, content);
         return {
           content: [
-            { type: "text", text: `✅ Document "${doc_name}.md" saved to R2.` },
+            {
+              type: "text",
+              text: `✅ Document "${doc_name}.md" saved to R2 (project: ${pid}).`,
+            },
           ],
         };
       },
@@ -453,14 +506,22 @@ export class MyMCP extends McpAgent {
     this.server.tool(
       "get_pending_instructions",
       "Get pending instructions and mark them as in_progress. For Claude Code use.",
-      {},
-      async () => {
+      {
+        project_id: z
+          .string()
+          .optional()
+          .describe("Filter by project. Defaults to 'default'"),
+      },
+      async ({ project_id }) => {
         const env = this.env as Env;
         const ts = now();
+        const pid = project_id || "default";
 
         const results = await env.COORDINATOR_DB.prepare(
-          "SELECT id, title, content, detail_ref, type, priority FROM instructions WHERE status = 'pending' ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 END, created_at ASC LIMIT 10",
-        ).all();
+          "SELECT id, title, content, detail_ref, type, priority FROM instructions WHERE status = 'pending' AND project_id = ? ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 END, created_at ASC LIMIT 10",
+        )
+          .bind(pid)
+          .all();
 
         const rows = results.results || [];
 
@@ -469,7 +530,7 @@ export class MyMCP extends McpAgent {
             content: [
               {
                 type: "text",
-                text: "✅ No pending instructions. All caught up!",
+                text: `✅ No pending instructions for project "${pid}". All caught up!`,
               },
             ],
           };
@@ -501,7 +562,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `📥 ${rows.length} pending instruction(s) picked up (now in_progress):\n\n${enriched.join("\n\n")}`,
+              text: `📥 ${rows.length} pending instruction(s) for project "${pid}" (now in_progress):\n\n${enriched.join("\n\n")}`,
             },
           ],
         };
@@ -519,17 +580,22 @@ export class MyMCP extends McpAgent {
         status: z.enum(["in_progress", "completed", "blocked"]),
         summary: z.string().describe("Short summary of progress"),
         details: z.string().optional().describe("Detailed progress notes"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
       },
-      async ({ instruction_id, status, summary, details }) => {
+      async ({ instruction_id, status, summary, details, project_id }) => {
         const env = this.env as Env;
         const id = genId();
         const ts = now();
+        const pid = project_id || "default";
 
         await env.COORDINATOR_DB.prepare(
-          `INSERT INTO progress_reports (id, instruction_id, status, summary, details, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO progress_reports (id, instruction_id, status, summary, details, project_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(id, instruction_id, status, summary, details || null, ts)
+          .bind(id, instruction_id, status, summary, details || null, pid, ts)
           .run();
 
         if (status === "completed") {
@@ -544,7 +610,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `✅ Progress report [${id}] submitted for instruction [${instruction_id}] (status: ${status})`,
+              text: `✅ Progress report [${id}] submitted for instruction [${instruction_id}] (status: ${status}, project: ${pid})`,
             },
           ],
         };
@@ -566,24 +632,29 @@ export class MyMCP extends McpAgent {
             }),
           )
           .describe("Array of files to sync"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
       },
-      async ({ files }) => {
+      async ({ files, project_id }) => {
         const env = this.env as Env;
         const ts = now();
+        const pid = project_id || "default";
         const synced: string[] = [];
 
         for (const file of files) {
-          const r2Key = `projects/${PROJECT_ID}/files/${file.path}`;
+          const r2Key = `projects/${pid}/files/${file.path}`;
           const size = new TextEncoder().encode(file.content).length;
 
           await env.COORDINATOR_BUCKET.put(r2Key, file.content);
 
           await env.COORDINATOR_DB.prepare(
-            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, synced_at)
-             VALUES (?, ?, ?, ?, ?)
+            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, project_id, synced_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(file_path) DO UPDATE SET r2_key = ?, size_bytes = ?, synced_at = ?`,
           )
-            .bind(genId(), file.path, r2Key, size, ts, r2Key, size, ts)
+            .bind(genId(), file.path, r2Key, size, pid, ts, r2Key, size, ts)
             .run();
 
           synced.push(`${file.path} (${size} bytes)`);
@@ -593,7 +664,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `✅ ${synced.length} file(s) synced:\n${synced.join("\n")}`,
+              text: `✅ ${synced.length} file(s) synced (project: ${pid}):\n${synced.join("\n")}`,
             },
           ],
         };
@@ -611,10 +682,15 @@ export class MyMCP extends McpAgent {
             content: z.string(),
           }),
         ),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
       },
-      async ({ files }) => {
+      async ({ files, project_id }) => {
         const env = this.env as Env;
         const ts = now();
+        const pid = project_id || "default";
         let totalSize = 0;
         let count = 0;
 
@@ -629,17 +705,17 @@ export class MyMCP extends McpAgent {
             continue;
           }
 
-          const r2Key = `projects/${PROJECT_ID}/files/${file.path}`;
+          const r2Key = `projects/${pid}/files/${file.path}`;
           const size = new TextEncoder().encode(file.content).length;
           totalSize += size;
 
           await env.COORDINATOR_BUCKET.put(r2Key, file.content);
           await env.COORDINATOR_DB.prepare(
-            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, synced_at)
-             VALUES (?, ?, ?, ?, ?)
+            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, project_id, synced_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(file_path) DO UPDATE SET r2_key = ?, size_bytes = ?, synced_at = ?`,
           )
-            .bind(genId(), file.path, r2Key, size, ts, r2Key, size, ts)
+            .bind(genId(), file.path, r2Key, size, pid, ts, r2Key, size, ts)
             .run();
 
           count++;
@@ -649,7 +725,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `✅ File tree synced: ${count} files, ${totalSize} bytes total.`,
+              text: `✅ File tree synced (project: ${pid}): ${count} files, ${totalSize} bytes total.`,
             },
           ],
         };
@@ -664,21 +740,33 @@ export class MyMCP extends McpAgent {
     this.server.tool(
       "get_project_status",
       "Get a summary of the project: instruction counts by status, file count, recent activity",
-      {},
-      async () => {
+      {
+        project_id: z
+          .string()
+          .optional()
+          .describe("Filter by project. Defaults to 'default'"),
+      },
+      async ({ project_id }) => {
         const env = this.env as Env;
+        const pid = project_id || "default";
 
         const instrCounts = await env.COORDINATOR_DB.prepare(
-          "SELECT status, COUNT(*) as count FROM instructions GROUP BY status",
-        ).all();
+          "SELECT status, COUNT(*) as count FROM instructions WHERE project_id = ? GROUP BY status",
+        )
+          .bind(pid)
+          .all();
 
         const fileCount = await env.COORDINATOR_DB.prepare(
-          "SELECT COUNT(*) as count FROM project_files",
-        ).first<{ count: number }>();
+          "SELECT COUNT(*) as count FROM project_files WHERE project_id = ?",
+        )
+          .bind(pid)
+          .first<{ count: number }>();
 
         const recentReports = await env.COORDINATOR_DB.prepare(
-          "SELECT pr.summary, pr.status, pr.created_at, i.title FROM progress_reports pr LEFT JOIN instructions i ON pr.instruction_id = i.id ORDER BY pr.created_at DESC LIMIT 5",
-        ).all();
+          "SELECT pr.summary, pr.status, pr.created_at, i.title FROM progress_reports pr LEFT JOIN instructions i ON pr.instruction_id = i.id WHERE pr.project_id = ? ORDER BY pr.created_at DESC LIMIT 5",
+        )
+          .bind(pid)
+          .all();
 
         const statusMap: Record<string, number> = {};
         for (const row of (instrCounts.results || []) as any[]) {
@@ -690,7 +778,7 @@ export class MyMCP extends McpAgent {
         );
 
         const summary = [
-          "📊 Project Status:",
+          `📊 Project Status (${pid}):`,
           `  Instructions: ${statusMap["pending"] || 0} pending, ${statusMap["in_progress"] || 0} in progress, ${statusMap["completed"] || 0} completed`,
           `  Synced Files: ${fileCount?.count || 0}`,
           recentLines.length > 0
@@ -708,21 +796,26 @@ export class MyMCP extends McpAgent {
       "Search through instructions and progress reports by keyword",
       {
         query: z.string().describe("Search keyword"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Filter by project. Defaults to 'default'"),
       },
-      async ({ query }) => {
+      async ({ query, project_id }) => {
         const env = this.env as Env;
         const q = `%${query}%`;
+        const pid = project_id || "default";
 
         const instrResults = await env.COORDINATOR_DB.prepare(
-          "SELECT id, title, status, created_at FROM instructions WHERE title LIKE ? OR content LIKE ? LIMIT 10",
+          "SELECT id, title, status, created_at FROM instructions WHERE project_id = ? AND (title LIKE ? OR content LIKE ?) LIMIT 10",
         )
-          .bind(q, q)
+          .bind(pid, q, q)
           .all();
 
         const reportResults = await env.COORDINATOR_DB.prepare(
-          "SELECT id, instruction_id, summary, created_at FROM progress_reports WHERE summary LIKE ? OR details LIKE ? LIMIT 10",
+          "SELECT id, instruction_id, summary, created_at FROM progress_reports WHERE project_id = ? AND (summary LIKE ? OR details LIKE ?) LIMIT 10",
         )
-          .bind(q, q)
+          .bind(pid, q, q)
           .all();
 
         const instrLines = ((instrResults.results || []) as any[]).map(
@@ -737,7 +830,12 @@ export class MyMCP extends McpAgent {
         const total = instrLines.length + reportLines.length;
         if (total === 0) {
           return {
-            content: [{ type: "text", text: `🔍 No results for "${query}"` }],
+            content: [
+              {
+                type: "text",
+                text: `🔍 No results for "${query}" in project "${pid}"`,
+              },
+            ],
           };
         }
 
@@ -745,7 +843,7 @@ export class MyMCP extends McpAgent {
           content: [
             {
               type: "text",
-              text: `🔍 Search results for "${query}" (${total} matches):\n\nInstructions:\n${instrLines.join("\n") || "  (none)"}\n\nReports:\n${reportLines.join("\n") || "  (none)"}`,
+              text: `🔍 Search results for "${query}" in project "${pid}" (${total} matches):\n\nInstructions:\n${instrLines.join("\n") || "  (none)"}\n\nReports:\n${reportLines.join("\n") || "  (none)"}`,
             },
           ],
         };
@@ -755,10 +853,12 @@ export class MyMCP extends McpAgent {
 }
 
 // Export the OAuthProvider as the default export
-// This wraps the entire Worker with OAuth authentication
 export default new OAuthProvider({
   apiRoute: "/mcp",
-  apiHandler: MyMCP.serve("/mcp"),
+  apiHandlers: {
+    "/mcp": MyMCP.serve("/mcp"),
+    "/sse": MyMCP.serveSSE("/sse"),
+  },
   defaultHandler: GitHubHandler,
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
