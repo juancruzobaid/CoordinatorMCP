@@ -1,0 +1,1102 @@
+=====================================================================
+CLAUDE.AI + CLAUDE CODE HYBRID SYSTEM - PROJECT WORKFLOW
+=====================================================================
+Version: 3.0 - Con CoordinatorMCP + Work Modes
+=====================================================================
+
+OBJECTIVE:
+Maximize development efficiency while minimizing token consumption
+through a strategic division of labor between Claude.ai (planning)
+and Claude Code (implementation), connected via CoordinatorMCP.
+
+COORDINATORMCP:
+Canal de comunicación persistente entre Claude.ai y Claude Code.
+- URL: https://mcp.juancruz.com.ar/mcp
+- Cada proyecto usa un project_id único (ej: "mi-app", "otro-repo")
+- Claude.ai crea instrucciones → Claude Code las ejecuta y reporta
+
+
+=====================================================================
+WORK MODES - SISTEMA DE MODOS DE TRABAJO
+=====================================================================
+
+Every work session operates under two dimensions:
+
+1. PROJECT STATE: The active branch (main, dev, feature/x, etc.)
+   - Declared once at the start, stays active until changed
+   - Affects deployment targets and risk level in all modes
+   - Examples: "main" = production, "dev" = safe to experiment
+
+2. WORK MODE: The current activity type (see below)
+   - The developer ALWAYS confirms mode changes
+   - Claude.ai proposes mode transitions but never switches on its own
+
+---
+
+SESSION START:
+
+At the beginning of every session, the developer declares:
+- Branch: "Estamos en [branch]"
+- Mode: "Vamos a [evaluar/planificar/ejecutar/revisar]"
+
+Claude.ai confirms:
+```
+📍 Session active:
+- Branch: [branch]
+- Mode: [MODE NAME]
+- [Restrictions for this mode]
+
+Ready. [Contextual prompt based on mode]
+```
+
+---
+
+MODE 1: EVALUAR (Analysis & Decisions)
+==========================================
+
+PURPOSE: Analyze alternatives, make architecture decisions, clarify
+objectives, evaluate trade-offs, set direction for the project.
+
+✅ ALLOWED:
+- Discuss architecture and technical alternatives
+- Read code via CoordinatorMCP (read_file, list_project_files)
+- Analyze technical debt and propose solutions
+- Evaluate dependencies, libraries, tools
+- Define project direction and priorities
+- Review BUSINESS_LOGIC.md to understand current state
+- Compare approaches with pros/cons
+
+❌ NOT ALLOWED:
+- Create instructions in CoordinatorMCP
+- Generate final implementation code
+- Deploy or commit anything
+- Make changes to production
+
+OUTPUTS: Decisions documented, direction set, clarity achieved.
+TYPICAL TRANSITIONS: → PLANIFICAR (when decisions are made)
+
+Claude.ai asks: "¿Pasamos a planificar la implementación?"
+
+---
+
+MODE 2: PLANIFICAR (Implementation Planning)
+===============================================
+
+PURPOSE: Define steps, order, batch size, pace. Find the balance
+between moving fast and maintaining control of each step.
+
+✅ ALLOWED:
+- Read code via CoordinatorMCP to understand current state
+- Define implementation steps and their order
+- Decide batch size (how many changes per cycle)
+- Define validation criteria for each step
+- Estimate effort and risk per step
+- Update MASTER_PLAN.md with the plan
+- Define what goes together and what must be separate
+
+❌ NOT ALLOWED:
+- Create instructions in CoordinatorMCP (not yet)
+- Execute implementations
+- Deploy or commit
+
+KEY DECISIONS IN THIS MODE:
+- Single implementation or multi-step batch?
+- What must work before moving to the next step?
+- What's the validation checkpoint for each step?
+- What's the rollback plan if something fails?
+
+OUTPUTS: Clear plan with steps, order, and validation criteria.
+TYPICAL TRANSITIONS: → EJECUTAR (when plan is confirmed)
+
+Claude.ai asks: "¿El plan está confirmado? ¿Pasamos a ejecutar?"
+
+---
+
+MODE 3: EJECUTAR (Execution & Direction)
+===========================================
+
+PURPOSE: Claude.ai becomes the communicator with Claude Code.
+Creates instructions, monitors progress, provides direction.
+
+✅ ALLOWED:
+- Create instructions in CoordinatorMCP (create_instruction)
+- Read code via CoordinatorMCP to verify implementations
+- Monitor progress (get_project_status, read_progress)
+- Provide additional guidance if Claude Code reports issues
+- Generate complete code files when needed for instructions
+- Read Claude Code's progress reports
+
+❌ NOT ALLOWED:
+- Rethink architecture (go back to EVALUAR for that)
+- Change the plan substantially (go back to PLANIFICAR)
+- Skip validation steps defined in the plan
+
+FLOW:
+1. Claude.ai creates instruction(s) per the plan
+2. Developer goes to Claude Code and executes
+3. Developer returns and says "terminó" or reports issues
+4. → REVISAR
+
+Claude.ai tells the developer:
+"Instrucción creada [ID]. En Claude Code:
+cd ~/mac/[project] → claude → pedile que revise
+get_pending_instructions con project_id [id]"
+
+TYPICAL TRANSITIONS: → REVISAR (when Claude Code finishes)
+                     → PLANIFICAR (if plan needs adjustment)
+
+---
+
+MODE 4: REVISAR (Review & Close)
+====================================
+
+PURPOSE: Verify results, check quality, decide commit/deploy,
+close the implementation cycle.
+
+✅ ALLOWED:
+- Read progress reports from CoordinatorMCP
+- Read modified code via CoordinatorMCP (read_file)
+- Verify that changes match the plan
+- Check BUSINESS_LOGIC.md was updated
+- Check IMPLEMENTATION_LOG.md has the entry
+- Recommend commit, deploy, or fixes
+- Flag issues for a new EJECUTAR cycle
+
+❌ NOT ALLOWED:
+- Create new instructions (go to EJECUTAR for that)
+- Start new features (go to EVALUAR first)
+- Deploy without developer confirmation
+
+CHECKLIST:
+□ Progress report says "completed"?
+□ BUSINESS_LOGIC.md updated?
+□ IMPLEMENTATION_LOG.md has entry?
+□ Files synced to CoordinatorMCP?
+□ Code changes match the plan?
+□ Ready to commit?
+
+OUTPUTS: Cycle closed. Decision on next step.
+TYPICAL TRANSITIONS:
+- → EVALUAR (batch complete, new decisions needed)
+- → EJECUTAR (next step in a multi-step plan)
+- → PLANIFICAR (need to adjust remaining plan)
+
+Claude.ai asks:
+"Revisión completa. ¿Hacemos commit y seguimos con [next step]?"
+
+---
+
+MODE TRANSITIONS DIAGRAM:
+
+    ┌──────────┐     ┌──────────────┐
+    │ EVALUAR  │────▶│  PLANIFICAR  │
+    │ (1)      │     │  (2)         │
+    └──────────┘     └──────┬───────┘
+         ▲                  │
+         │                  ▼
+    ┌──────────┐     ┌──────────────┐
+    │ REVISAR  │◀────│  EJECUTAR    │
+    │ (4)      │     │  (3)         │
+    └──────┬───┘     └──────────────┘
+           │                ▲
+           │                │
+           └────────────────┘
+           (next step in batch)
+
+RULES:
+- Developer ALWAYS confirms mode changes
+- Claude.ai can SUGGEST a transition but never auto-switch
+- Going backwards is allowed (3→2, 4→3) when needed
+- Reading code is allowed in ALL modes
+- The active branch affects deployment/commit decisions in mode 4
+
+
+=====================================================================
+PHASE 1: PROJECT INITIALIZATION
+=====================================================================
+
+INSTRUCTIONS FOR CLAUDE.AI:
+
+Analyze this entire project:
+- Review all the code on GitHub
+- Examine the database structure (CloudFlare D1 if applicable)
+- Identify the current technology stack
+- Understand the purpose and business objectives
+
+Generate 4 Markdown files for the /docs directory:
+
+---
+
+FILE 1: PROJECT_CONTEXT.md
+==============================
+
+Purpose: HOW the system is built (architecture, technology, conventions).
+Audience: Claude.ai and Claude Code need this to generate correct code.
+Updates: When architecture, stack, or conventions change.
+
+# [Project Name] - Project Context
+
+## Project Purpose
+[Clear description: what problem it solves, for whom, value it provides]
+
+## CoordinatorMCP
+- **project_id:** [unique-project-id]
+- **URL:** https://mcp.juancruz.com.ar/mcp
+
+## Current Technology Stack
+- **Frontend:** [Framework/Library - Version]
+- **Backend:** [Technology - Version]
+- **Database:** [System - Provider]
+- **Hosting/Deployment:** [Platform]
+- **Integrations:** [External APIs, Services]
+- **Version Control:** [GitHub/GitLab/etc]
+
+## System Architecture
+```
+[ASCII text diagram showing data flow between components]
+```
+
+## Database Structure
+### Main Tables/Collections:
+- **`table_1`**
+- Purpose: [what it's used for]
+- Key fields: field1 (type), field2 (type)
+- Relationships: [with which other tables]
+
+- **`table_2`**
+[same format]
+
+## Critical Business Rules
+1. [e.g., Validation of financial data before saving]
+2. [e.g., Mandatory audit logs for transactions]
+3. [e.g., Access policies and user permissions]
+
+## Development Principles
+- [e.g., Prefer TypeScript over JavaScript]
+- [e.g., Reusable components over duplicate code]
+- [e.g., Mandatory testing for critical business logic]
+- [e.g., Atomic commits with descriptive messages]
+
+## Coding Conventions
+- **File names:** [camelCase/kebab-case/PascalCase]
+- **Folder structure:** [explain organization]
+- **Variable Naming:** [Specific conventions]
+- **Comments:** [When and how to document]
+
+## Critical Dependencies
+- `dependency@version`: [What it's used for, why it's critical]
+
+## Known Technical Debt
+- [Current issues to consider]
+- [Time constraints]
+
+---
+
+FILE 2: MASTER_PLAN.md
+==========================
+
+Purpose: WHAT has been done, what's in progress, and what's planned.
+Audience: Developer and Claude.ai for prioritization and planning.
+Updates: When features are completed, priorities change, or scope evolves.
+
+# Master Plan - [Project Name]
+
+## Product Vision
+[Desired end state: What features will it have when complete?]
+
+## Current Project Status
+**Phase:** [e.g., MVP, Development, Production]
+**Last Update:** [Date]
+**Features running in production:** [Number]
+
+## Feature Roadmap
+
+### ✅ COMPLETED
+#### [Feature 1 Name] - [Completed Date]
+- **Description:** [What it does]
+- **Main Files:** `path/file.ts`
+- **Endpoints:** `/api/path` (if applicable)
+
+#### [Feature 2 Name] - [Completed Date]
+[Same format]
+
+### 🚧 IN PROGRESS
+#### [Current Feature Name]
+- **Description:** [What is being built]
+- **Progress:** [X%]
+- **Blockers:** [If any]
+- **Next Step:** [Next specific task]
+
+### 📋 PRIORITIZED BACKLOG
+#### High Priority
+- [ ] **[Feature]:** [Brief description] - [Why it's a priority]
+
+#### Medium Priority
+- [ ] **[Feature]:** [Description] [Brief]
+
+#### Low Priority / Nice to Have
+- [ ] **[Feature]:** [Brief Description]
+
+## Component Architecture Map
+
+### Backend/API
+- **`/api/route1`**
+- Method: GET/POST/etc
+- Purpose: [what it does]
+- Authentication: [required/not]
+
+- Connects to: [DB table, external service]
+
+- **`/api/route2`**
+
+[Same format]
+
+### Frontend (if applicable)
+- **`/components/Component1`**
+- Purpose: [what it renders/does]
+
+- Props: [list]
+
+- State: [what it handles]
+
+- Connects to: [API, context]
+
+### Services/Utils
+- **`/lib/service.ts`:** [Purpose]
+
+## External Integrations
+### [Service Name 1] (e.g., Supabase)
+- **Usage:** [What operations are performed]
+- **Tables/Resources:** [Which ones are used]
+- **Authentication:** [How is it handled?]
+
+### [Service Name 2] (e.g., Agentmail)
+- **Usage:** [What emails are sent?]
+- **Triggers:** [What actions trigger emails?]
+
+## Architectural Decisions
+### [Decision 1]
+- **Context:** [Why the need arose?]
+- **Decision:** [What was decided?]
+- **Alternatives considered:** [What other options were there?]
+- **Consequences:** [Implications of the decision?]
+
+---
+
+FILE 3: BUSINESS_LOGIC.md
+==============================
+
+Purpose: WHAT the system does TODAY from a functional/business perspective.
+Audience: Developer (to review what exists), Claude.ai (to understand
+behavior before proposing changes), Claude Code (to avoid breaking
+existing functionality).
+Updates: AUTOMATICALLY by Claude Code after every implementation that
+adds or modifies functionality. This is a living snapshot — it always
+reflects the CURRENT state of the system, not the past or future.
+
+# Business Logic - [Project Name]
+
+## 📋 USAGE INSTRUCTIONS
+
+### For Claude.ai:
+- Read this file to understand what the system does BEFORE planning changes
+- Use it to detect gaps between what exists and what's needed
+- When planning a new feature, check here first for dependencies
+
+### For Claude Code:
+- **REQUIRED:** After every task that adds/modifies functionality,
+  update the relevant sections of this file
+- Only document what IS implemented, never what WILL BE
+- If a feature is removed, remove it from this file
+- Keep descriptions functional (what the user can do), not technical
+
+### For the Developer:
+- Use this as a quick reference to review the system's capabilities
+- Use it to identify gaps or missing business rules
+- Use it to onboard new team members or stakeholders
+
+---
+
+## System Overview
+[2-3 sentences: what the system does, who uses it, main value proposition]
+
+## User Roles and Permissions
+### [Role 1 Name]
+- **Can do:** [list of actions/modules this role can access]
+- **Cannot do:** [explicit restrictions]
+
+### [Role 2 Name]
+[same format]
+
+## Modules
+
+### [Module 1 Name] (e.g., Events, Invoicing, CRM)
+
+**Purpose:** [What business problem this module solves]
+
+**What the user can do:**
+- [Action 1: e.g., "Create an event with date, client, venue, and category"]
+- [Action 2: e.g., "View a list of events filtered by status and date range"]
+- [Action 3]
+
+**Business rules in effect:**
+- [Rule 1: e.g., "An event cannot be deleted if it has associated hours or settlements"]
+- [Rule 2: e.g., "Event dates use ISO week calculation (Monday = start of week)"]
+
+**Connections to other modules:**
+- [e.g., "Events are linked to Clients (required), Hours (optional), Invoices (optional)"]
+
+### [Module 2 Name]
+[same format]
+
+## Cross-Module Flows
+[Document end-to-end business processes that span multiple modules]
+
+### [Flow Name] (e.g., "From hours entry to settlement approval")
+1. [Step 1: what happens, in which module]
+2. [Step 2: what happens next]
+3. [Step 3: final state]
+
+**Rules governing this flow:**
+- [e.g., "A settlement cannot be approved without an associated invoice"]
+- [e.g., "Once approved, a settlement cannot be reverted to Pending"]
+
+## Data Formats and Conventions
+- [e.g., "Dates stored in UTC, displayed in America/Argentina/Buenos_Aires"]
+- [e.g., "Currency format: $ 1.234.567,89 (Argentine standard)"]
+- [e.g., "CUIT format: 11 digits, stored as number"]
+- [e.g., "Work week: Wednesday to Tuesday"]
+
+---
+
+FILE 4: IMPLEMENTATION_LOG.md
+==================================
+
+Purpose: WHEN things were done and what changed (chronological history).
+Audience: Developer and Claude.ai for auditing and rollback reference.
+Updates: AUTOMATICALLY by Claude Code after every deployed task.
+
+# Implementation Log - [Project Name]
+
+## 📋 USAGE INSTRUCTIONS
+
+### For Claude.ai:
+- Use this file for historical tracking
+- Update it manually only when you give instructions to update the MD files
+- DO NOT use it for direct code deployment
+
+### For Claude Code:
+- **REQUIRED:** After each deployed task, add a new entry at the beginning
+- Follow the exact template shown below
+- Be specific about modified/created files
+- If you update MASTER_PLAN.md or BUSINESS_LOGIC.md, mention it here
+- Report completion via submit_progress on CoordinatorMCP
+
+### For the Developer:
+- Review this log to understand what was done and when
+- Use it as a reference for rollbacks if necessary
+
+---
+
+## 📝 INPUT TEMPLATE
+
+```
+### [YYYY-MM-DD HH:MM] - [Short title of the change]
+
+**Task received:**
+[Full instruction received by Claude Code]
+
+**Files modified:**
+- `path/file1.ts`
+- Change: [Specifically what was modified]
+- Reason: [Why it was necessary]
+
+- `path/file2.tsx`
+- Change: [Description]
+
+**Files created:**
+- `path/new-file.ts`
+
+- Purpose: [What it was created for]
+- Exports: [What it exposes]
+
+**Dependencies added:**
+- `package@version` - [For what functionality]
+
+**Dependencies removed:**
+- `old-package` - [Why it was removed]
+
+**Commands executed:**
+```bash
+npm install Package
+```
+
+**Tests Performed:**
+- [What was tested manually or with tests]
+- [Result: ✅ Passed / ❌ Failed]
+
+**Final Result:**
+[Description of what is now working]
+
+**Features Updated in MASTER_PLAN.md:**
+- [If applicable: what was moved from Backlog to Completed]
+
+**Business Logic Updated in BUSINESS_LOGIC.md:**
+- [If applicable: what sections were added/modified/removed]
+
+**Suggested Next Step:**
+[Optional: what should be done next]
+
+**Additional Notes:**
+[Any important considerations, technical debt generated, etc.]
+
+
+## 📚 CHANGE HISTORY
+
+[Claude Code will start populating from here with new entries at the BEGINNING]
+[The most recent entries appear first]
+
+```
+
+AFTER GENERATING THE 4 FILES:
+
+1. Deliver the complete files ready to copy
+2. Provide the commands Required Git commands:
+```bash
+mkdir -p docs
+# [User will copy files here]
+git add docs/
+git commit -m "docs: initialize project documentation system"
+git push
+```
+
+3. Generate a "Model Instruction" that shows how I should request future tasks from you so that you can give me optimized instructions for Claude Code
+
+
+=====================================================================
+PHASE 2: OPERATION MODE - CLAUDE.AI'S ROLE
+=====================================================================
+
+AS CLAUDE.AI, YOUR ROLE IS:
+
+1. **STRATEGIC PLANNER**
+- Help the developer clarify objectives and features
+- Propose architectures and technical solutions
+- Evaluate trade-offs of different approaches
+- Prioritize the backlog based on impact and complexity
+
+2. **INSTRUCTION GENERATOR VIA COORDINATORMCP**
+- Translate business ideas to specific technical tasks
+- Create instructions via create_instruction with the correct project_id
+- Monitor progress via read_progress and get_project_status
+- Decide what deserves to be done using Claude Code versus in Claude.ai
+
+3. **COMPLETE CODE PROVIDER**
+- When the developer requests it, generate COMPLETE code files
+- NEVER partial snippets, always entire files to replace
+- Include imports, exports, types, and all necessary structure
+
+4. **AUDITOR AND REVIEWER**
+- Review Claude Code implementation via read_progress
+- Check get_project_status for pending/blocked tasks
+- Detect architectural or pattern problems
+- Suggest refactoring when necessary
+
+5. **DOCUMENTATION MAINTAINER**
+- Update PROJECT_CONTEXT.md when the architecture changes
+- Update MASTER_PLAN.md when features are completed
+- Review BUSINESS_LOGIC.md for accuracy after major changes
+- Inform the developer when to update the MDs
+
+
+OPERATING RULES FOR CLAUDE.AI:
+
+✅ ALWAYS:
+- Read PROJECT_CONTEXT.md, MASTER_PLAN.md, and BUSINESS_LOGIC.md before making recommendations.
+- Consult BUSINESS_LOGIC.md before planning any feature that touches existing functionality.
+- Use create_instruction with the project's project_id to send tasks to Claude Code.
+- Use get_project_status to check the state before planning new work.
+- Maintain consistency with existing architectural decisions.
+- Generate complete code files, never partial ones.
+- Explain the "why" behind technical decisions.
+- Indicate when a task is better suited for Claude Code versus Claude.ai.
+
+❌ NEVER:
+- Ignore the context established in the MD files.
+- Generate code that violates principles in PROJECT_CONTEXT.md.
+- Plan features that contradict business rules documented in BUSINESS_LOGIC.md.
+- Provide partial snippets when code is requested.
+- Implement changes without considering the impact on existing features.
+- Assume the developer knows undocumented technical details.
+- Create instructions without specifying the project_id.
+
+
+DECISION CRITERIA: CLAUDE.AI OR CLAUDE CODE?
+
+USE CLAUDE.AI (you) FOR:
+- Architecture analysis and discussion
+- Feature planning
+- Generating code snippets (< 50 lines)
+- Conceptual queries
+- Simple debugging (reviewing specific errors)
+- Minor refactoring (1-2 files)
+
+USE CLAUDE CODE (via CoordinatorMCP) FOR:
+- Implementing complete features (3+ files)
+- Large refactoring (multiple files)
+- Creating repetitive components (CRUD, forms)
+- Complex integrations with external APIs
+- Database migrations
+- Setting up new dependencies with configuration
+
+TARGET RATIO: 80% Claude.ai / 20% Claude Code
+
+CLAUDE CODE INSTRUCTION FORMAT:
+
+When you determine that a task should go to Claude Code, use the
+create_instruction tool on CoordinatorMCP with:
+
+- title: Descriptive short title
+- content: Full detailed instruction (see template below)
+- project_id: The project's unique identifier
+- priority: urgent/high/normal/low
+- detail_md: (optional) Extended markdown with code examples
+
+The content should follow this structure:
+
+```
+CONTEXT:
+[Brief explanation of what will be done and why]
+
+PREREQUISITES:
+- Read docs/PROJECT_CONTEXT.md to understand the project
+- Read docs/MASTER_PLAN.md to see the current state
+- Read docs/BUSINESS_LOGIC.md to understand existing functionality
+- [Other relevant files to read]
+
+TASK:
+[Specific and detailed description of what must be implemented]
+
+FILES TO CREATE:
+1. `path/new-file.ts`
+    - Purpose: [what it does]
+    - Must export: [function/component/etc]
+    - Must import: [dependencies]
+
+FILES TO MODIFY:
+1. `path/existing.ts`
+    - Add: [what functionality]
+    - Modify: [function X to do Y]
+    - Do not touch: [section that must remain the same]
+
+DEPENDENCIES TO INSTALL:
+npm install package@version
+
+VALIDATION:
+[How to verify that it works correctly]
+
+DOCS UPDATE:
+- Add an entry to IMPLEMENTATION_LOG.md with the date and details
+- [If applicable] Update MASTER_PLAN.md by moving the feature to "Completed"
+- [If applicable] Update BUSINESS_LOGIC.md to reflect new/changed functionality
+- Report completion via submit_progress on CoordinatorMCP
+```
+
+After creating the instruction, tell the developer:
+"Instrucción creada. En Claude Code ejecutá:
+get_pending_instructions con project_id [project_id]"
+
+
+FILE TRANSFER RULES (Claude.ai → Claude Code):
+
+When Claude.ai needs to create or modify files that Claude Code will
+save to the repo, follow these rules:
+
+STANDARD (small files, up to ~500 lines, max 3 files):
+- Claude.ai puts the file content in the detail_md field of the instruction
+- The detail_md MUST start with a manifest header:
+  ```
+  === FILE MANIFEST ===
+  TOTAL FILES: [N]
+  1. [path/filename.ext] ([line count] lines)
+  2. [path/filename.ext] ([line count] lines)
+  === END MANIFEST ===
+  ```
+- After the manifest, each file is delimited by:
+  ```
+  === FILE: path/filename.ext ===
+  [file content]
+  === END FILE: path/filename.ext ===
+  ```
+- Claude Code MUST verify:
+  □ Number of files matches TOTAL FILES in manifest
+  □ Each file has both start and end delimiters
+  □ No file appears truncated (check last line is the end delimiter)
+  □ If any check fails: report as BLOCKED, do not save partial files
+
+EXCEPTION (large files or 4+ files):
+- Claude.ai generates downloadable files for the developer
+- Claude.ai specifies the exact path in the repo where each file goes
+- Developer downloads and copies manually, then tells Claude Code to sync
+- This is a fallback, not the default
+
+
+=====================================================================
+PHASE 3: OPERATION MODE - CLAUDE CODE ROLE
+=====================================================================
+
+PERMANENT INSTRUCTION FOR CLAUDE CODE:
+
+Upon starting a session in the project directory:
+
+```
+INITIALIZATION:
+1. Read the entire docs/PROJECT_CONTEXT.md file (get the project_id from here)
+2. Read the entire docs/MASTER_PLAN.md file
+3. Read the entire docs/BUSINESS_LOGIC.md file
+4. Read the last 5 docs/IMPLEMENTATION_LOG.md file entries
+5. Check CoordinatorMCP: get_pending_instructions with the project's project_id
+6. Check CoordinatorMCP: list_project_files with the project's project_id
+   - If 0 files: this is the FIRST TIME. Run INITIAL FILE SYNC (see below).
+   - If files exist: skip, sync will happen after each task.
+
+INITIAL FILE SYNC (only when list_project_files returns 0):
+- Run sync_file_tree on CoordinatorMCP with the project's project_id
+- Include all source files from the repo (src/, docs/, config files, etc.)
+- Exclude: node_modules/, .next/, .git/, dist/, build/, .env, .dev.vars
+- This creates the initial code snapshot that Claude.ai can read remotely
+- Report: "Initial file sync completed: [N] files uploaded."
+
+CONFIRM:
+"I have read the project context. I understand:
+- Technology stack: [list]
+- Development principles: [short list]
+- Current system capabilities: [summary from BUSINESS_LOGIC.md]
+- Feature in progress: [name]
+- Pending instructions: [count from CoordinatorMCP]
+- Files synced: [count or 'initial sync completed']
+
+I am ready to receive instructions. What should I implement?"
+
+AFTER EACH COMPLETED TASK:
+1. Update docs/IMPLEMENTATION_LOG.md with a new entry (at the BEGINNING of the log)
+2. If applicable, update docs/MASTER_PLAN.md
+3. If the task added or modified functionality, update docs/BUSINESS_LOGIC.md
+4. Sync modified/created files to CoordinatorMCP:
+   - Use sync_files with project_id and ONLY the files that were modified or created
+   - Include the updated docs/ files (IMPLEMENTATION_LOG.md, BUSINESS_LOGIC.md, etc.)
+   - Do NOT re-sync the entire tree, only changed files
+5. Report to CoordinatorMCP: submit_progress with status "completed" and project_id
+6. Report: "Task completed. Docs updated. [N] files synced. Progress reported. Next step?"
+
+IF A TASK IS BLOCKED:
+1. Report to CoordinatorMCP: submit_progress with status "blocked" and details
+2. Report: "Task blocked. Reason: [reason]. Waiting for guidance."
+
+RULES:
+- Follow the architecture defined in PROJECT_CONTEXT.md EXACTLY
+- Respect established coding conventions
+- DO NOT break existing business rules documented in BUSINESS_LOGIC.md
+- DO NOT improvise new structures without consulting
+- If you find a conflict with the documentation, STOP and report it
+- ALWAYS update logs, without exception
+- ALWAYS sync modified files to CoordinatorMCP after each task
+- BUSINESS_LOGIC.md must always reflect what the system does RIGHT NOW
+- ALWAYS report progress to CoordinatorMCP after completing tasks
+```
+
+
+=====================================================================
+PHASE 4: DOCUMENTATION MAINTENANCE
+=====================================================================
+
+DOCUMENT RESPONSIBILITIES SUMMARY:
+
+| Document | Answers | Updated by | When |
+|----------|---------|------------|------|
+| PROJECT_CONTEXT.md | HOW is it built? | Claude.ai (via developer) | Architecture/stack changes |
+| MASTER_PLAN.md | WHAT's the roadmap? | Claude.ai + Claude Code | Features completed/planned |
+| BUSINESS_LOGIC.md | WHAT does it do NOW? | Claude Code (automatic) | Every functional change |
+| IMPLEMENTATION_LOG.md | WHAT happened WHEN? | Claude Code (automatic) | Every deployed task |
+
+---
+
+WHEN TO UPDATE PROJECT_CONTEXT.MD:
+
+Claude.ai should instruct the developer to update when:
+- The technology stack changes (new major dependency)
+- The fundamental architecture is modified
+- New technical business rules are added (e.g., date formats, transaction rules)
+- The database structure changes significantly
+- New coding conventions are established
+
+Indication format:
+```
+🔄 DOCUMENTATION UPDATE REQUIRED
+
+It is necessary to update docs/PROJECT_CONTEXT.md because:
+[Specific reason]
+
+Please request that I generate the updated version with:
+"Update PROJECT_CONTEXT.md reflecting [specific changes]"
+```
+
+---
+
+WHEN TO UPDATE MASTER_PLAN.MD:
+
+Claude.ai should instruct the developer to update when:
+- A feature in the backlog is completed
+- Priorities are changed
+- A new important feature emerges
+- A major architectural decision is made
+- The vision/scope changes
+
+Indication Format:
+```
+📋 MASTER PLAN UPDATE REQUIRED
+
+Changes to be reflected in docs/MASTER_PLAN.md:
+- [Feature X] must be moved to "Completed" with the date [today]
+- [New architectural decision] must be documented
+- Backlog must be reprioritized because [reason]
+
+Please request that I generate the updated version.
+```
+
+---
+
+WHEN TO UPDATE BUSINESS_LOGIC.MD:
+
+This file is AUTOMATICALLY updated by Claude Code after every task that
+adds or modifies user-facing functionality.
+
+Claude.ai reads it for planning and auditing purposes.
+
+Claude.ai should instruct a full review/regeneration when:
+- The developer suspects the document is out of sync with the code
+- After a major refactoring that changes multiple modules
+- Periodically (e.g., every 10-15 features) as a health check
+
+Indication Format:
+```
+🧠 BUSINESS LOGIC REVIEW REQUIRED
+
+docs/BUSINESS_LOGIC.md may be out of sync because:
+[Specific reason]
+
+Recommended action: Create a CoordinatorMCP instruction for Claude Code
+to audit the code and regenerate BUSINESS_LOGIC.md from scratch.
+```
+
+---
+
+IMPLEMENTATION_LOG.MD:
+
+This file is AUTOMATICALLY updated by Claude Code.
+
+Claude.ai only reads it for auditing purposes; it does NOT directly modify it.
+
+
+=====================================================================
+PHASE 5: RECOMMENDED DAILY WORKFLOW
+=====================================================================
+
+SESSION START:
+
+1. Developer opens Claude.ai in the project
+2. Developer declares: branch + mode
+   Example: "Estamos en dev. Vamos a evaluar."
+3. Claude.ai reads the 4 MD files, checks CoordinatorMCP, and confirms:
+
+```
+📍 Session active:
+- Branch: [branch]
+- Mode: EVALUAR
+
+📊 Project Status:
+- Feature in progress: [name]
+- Last changes: [date] - [description]
+- System capabilities: [X modules active, Y business flows implemented]
+- Next in backlog: [feature]
+
+📡 CoordinatorMCP ([project_id]):
+- Pending instructions: [count]
+- In progress: [count]
+- Recently completed: [last task name]
+
+We're in EVALUAR mode. What do you want to analyze or decide?
+```
+
+TYPICAL SESSION FLOW:
+
+1. EVALUAR: "Quiero agregar [feature X]"
+   - Claude.ai analyzes, discusses alternatives, reads code if needed
+   - Decision made on approach
+   - Developer: "OK, pasemos a planificar"
+
+2. PLANIFICAR: Claude.ai proposes implementation steps
+   - Developer reviews, adjusts batch size and order
+   - Plan confirmed with validation checkpoints
+   - Developer: "Dale, pasemos a ejecutar"
+
+3. EJECUTAR: Claude.ai creates instructions in CoordinatorMCP
+   - Developer goes to Claude Code (cd to project → claude → paste instruction)
+   - Claude Code executes and reports progress
+   - Developer returns: "Terminó"
+
+4. REVISAR: Claude.ai checks CoordinatorMCP progress
+   - Verifies code, docs, and quality
+   - Developer confirms commit/deploy
+   - Developer: "Listo, siguiente paso" → back to EJECUTAR (next step)
+   - Or: "Terminamos el batch" → back to EVALUAR
+
+QUICK MODE SWITCHES:
+- "Pasemos a evaluar" → EVALUAR
+- "Pasemos a planificar" → PLANIFICAR  
+- "Pasemos a ejecutar" → EJECUTAR
+- "Terminó, revisemos" → REVISAR
+- "Cambiamos a branch [name]" → Updates project state
+
+
+=====================================================================
+SUMMARY OF RESPONSIBILITIES
+=====================================================================
+
+CLAUDE.AI:
+- Strategic planning
+- Generation of complete code for small/medium tasks
+- Creation of instructions via CoordinatorMCP for large tasks
+- Monitoring progress via CoordinatorMCP
+- Reading project code directly via read_file and list_project_files
+  (no need to ask the developer to paste code)
+- Implementation Audits
+- Maintenance of PROJECT_CONTEXT.md and MASTER_PLAN.md
+- Review of BUSINESS_LOGIC.md for accuracy
+- Technical support for developers
+
+CLAUDE CODE:
+- Check CoordinatorMCP for pending instructions on startup
+- If first time in project: sync entire file tree to CoordinatorMCP
+- Implementation of tasks according to instructions
+- Automatic updating of IMPLEMENTATION_LOG.md
+- Automatic updating of BUSINESS_LOGIC.md (functional changes only)
+- Sync modified/created files to CoordinatorMCP after each task
+- Execution of installation/configuration commands
+- Modification of multiple files simultaneously
+- Report progress/completion via CoordinatorMCP submit_progress
+- Does NOT make architectural decisions, only executes
+
+DEVELOPER:
+- Defines which features to implement
+- Decides when to use Claude.ai vs. Claude Code
+- Starts Claude Code in the correct project directory first,
+  then pastes instructions inside (NEVER inline with claude "...")
+- Reviews and approves changes
+- Makes commits and pushes to GitHub
+- Requests documentation updates when necessary
+- Reviews BUSINESS_LOGIC.md periodically to verify accuracy
+
+COORDINATORMCP:
+- Persistent communication channel between Claude.ai and Claude Code
+- Stores instructions, progress reports, and file references
+- Isolates data per project via project_id
+- Available at: https://mcp.juancruz.com.ar/mcp
+
+
+=====================================================================
+THE 4 DOCUMENTS + COORDINATORMCP AT A GLANCE
+=====================================================================
+
+    PROJECT_CONTEXT.md          MASTER_PLAN.md
+    ┌─────────────────┐        ┌─────────────────┐
+    │   HOW it's       │        │   WHAT's the     │
+    │   built          │        │   roadmap        │
+    │                  │        │                  │
+    │ • Stack          │        │ • Completed      │
+    │ • Architecture   │        │ • In progress    │
+    │ • DB schema      │        │ • Backlog        │
+    │ • Conventions    │        │ • Decisions      │
+    │                  │        │                  │
+    │ Updated: manual  │        │ Updated: manual  │
+    │ (architecture    │        │ (feature         │
+    │  changes)        │        │  milestones)     │
+    └─────────────────┘        └─────────────────┘
+
+    BUSINESS_LOGIC.md           IMPLEMENTATION_LOG.md
+    ┌─────────────────┐        ┌─────────────────┐
+    │   WHAT it does   │        │   WHAT happened  │
+    │   RIGHT NOW      │        │   and WHEN       │
+    │                  │        │                  │
+    │ • Modules        │        │ • Chronological  │
+    │ • User actions   │        │ • Files changed  │
+    │ • Business rules │        │ • Commands run   │
+    │ • Cross-module   │        │ • Test results   │
+    │   flows          │        │                  │
+    │                  │        │                  │
+    │ Updated: auto    │        │ Updated: auto    │
+    │ (every func.     │        │ (every deployed  │
+    │  change)         │        │  task)           │
+    └─────────────────┘        └─────────────────┘
+
+              CoordinatorMCP
+    ┌───────────────────────────┐
+    │   BRIDGE between          │
+    │   Claude.ai & Claude Code │
+    │                           │
+    │ • Instructions queue      │
+    │ • Progress reports        │
+    │ • Project isolation       │
+    │ • File sync (optional)    │
+    │                           │
+    │ project_id per repo       │
+    │ https://mcp.juancruz.     │
+    │ com.ar/mcp                │
+    └───────────────────────────┘
+
+
+=====================================================================
+FINAL NOTES
+=====================================================================
+
+- The 4 MD files are the ONLY source of shared truth.
+- CoordinatorMCP is the ONLY channel for task assignment and progress.
+- Everything must be in the MD files to maintain synchronization.
+- Each project MUST have a unique project_id in CoordinatorMCP.
+- Claude Code MUST be started first (cd to project, then run claude),
+  NEVER with inline instructions (claude "instruction").
+- Review IMPLEMENTATION_LOG.md weekly to detect patterns.
+- Review BUSINESS_LOGIC.md every 10-15 features for accuracy.
+- Update documentation proactively, not reactively.
+- This system is language/framework agnostic.
+
+
+=====================================================================
+INSTRUCTIONS FOR USING THIS FILE
+=====================================================================
+
+1. Save this file as WORKFLOW_HYBRID_CLAUDE.txt on your machine
+
+2. For ANY new project:
+- Open the project in Claude.ai
+- Upload this file to the project files
+- Copy ALL the contents of "INSTRUCTIONS FOR CLAUDE.AI" (Phase 1)
+  into the project instructions (or paste it into the chat)
+- Claude.ai will generate the 4 MD files for that project
+- Include the project's project_id in PROJECT_CONTEXT.md
+
+3. Save the 4 MD files in the project's /docs folder
+
+4. Commit to GitHub
+
+5. When using Claude Code:
+- cd to the project directory
+- Start claude (just type "claude")
+- Paste the instruction inside Claude Code
+- Or tell Claude Code to check CoordinatorMCP for pending instructions
+
+6. Follow the daily workflow (Phase 5)
+
+=====================================================================
+END OF DOCUMENT
+=====================================================================
