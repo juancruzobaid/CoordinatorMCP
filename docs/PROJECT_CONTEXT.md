@@ -1,7 +1,9 @@
 # CoordinatorMCP - Project Context
 
 ## Project Purpose
-CoordinatorMCP is a persistent communication bridge between Claude.ai (planner) and Claude Code (implementor). It enables a hybrid development workflow where Claude.ai creates task instructions, and Claude Code picks them up, executes them, and reports progress — all through a shared MCP server. Each project/repo gets its own isolated namespace via `project_id`.
+CoordinatorMCP is a persistent communication bridge between Claude.ai (planner) and Claude Code (implementor). It enables a hybrid development workflow where Claude.ai creates task instructions, and Claude Code picks them up, executes them, and reports progress — all through a shared MCP server. Each project/repo gets its own isolated namespace via `project_id`. Claude.ai can also read project code directly from GitHub via built-in GitHub API tools (github_read_file, github_list_files, github_read_tree) and access detailed progress reports stored in R2 via read_full_report.
+
+**Version:** 4.0.0
 
 ## CoordinatorMCP
 - **project_id:** coordinatormcp
@@ -34,7 +36,7 @@ CoordinatorMCP is a persistent communication bridge between Claude.ai (planner) 
 │   (Implementor) │────▶│                                  │
 │                 │◀────│   ┌────────────┐  ┌───────────┐  │
 └─────────────────┘     │   │ MyMCP (DO) │  │ D1 (SQL)  │  │
-                        │   │ 15 tools   │──│ 3 tables  │  │
+                        │   │ 19 tools   │──│ 3 tables  │  │
                         │   └────────────┘  └───────────┘  │
                         │                                  │
                         │   ┌───────────┐  ┌───────────┐   │
@@ -95,9 +97,11 @@ projects/
 - `hono@^4.12.4`: Web framework for OAuth routes
 - `zod@^4.3.6`: Schema validation for tool inputs
 - `wrangler@^4.69.0`: Cloudflare deployment CLI
+- **Secrets:** `GITHUB_PAT` (GitHub Personal Access Token for GitHub API tools)
 
 ## Known Technical Debt
 - package.json still has name "remote-mcp-server-authless" from the original template
 - `project_files` UNIQUE constraint is on `file_path` only, not `file_path + project_id` — could cause conflicts if two projects have the same file path
 - No health check endpoint (OAuthProvider intercepted the original `/health` route)
 - GitHub OAuth callback URL is hardcoded to mcp.juancruz.com.ar in utils.ts
+- `.DS_Store` and `package-lock.json` are not in `.gitignore`

@@ -53,6 +53,24 @@
 
 ## 📚 CHANGE HISTORY
 
+### 2026-03-11 - v4: GitHub API tools + enhanced progress reports
+
+**Task received:**
+Deploy v4 with GitHub API integration and enhanced progress reporting.
+
+**Files modified:**
+- `src/index.ts`
+  - Change: Added 3 GitHub API tools (github_read_file, github_list_files, github_read_tree), added read_full_report tool, enhanced submit_progress with full_report field stored in R2
+  - Reason: Allow Claude.ai to read code directly from GitHub repos; support detailed progress reports in R2
+
+**Dependencies added:**
+- `GITHUB_PAT` secret — GitHub Personal Access Token for GitHub API access
+
+**Final Result:**
+Claude.ai can now read code from any GitHub repo via 3 new tools. Progress reports support full detailed reports stored in R2 and retrievable via read_full_report. Total tools: 19.
+
+---
+
 ### 2026-03-11 12:30 - Initial file sync to CoordinatorMCP
 
 **Task received:**

@@ -21,7 +21,7 @@
 ---
 
 ## System Overview
-CoordinatorMCP is a remote MCP server that enables Claude.ai to send task instructions to Claude Code and monitor execution progress. It serves as a persistent bridge between the two tools, with data isolated per project via project_id.
+CoordinatorMCP is a remote MCP server that enables Claude.ai to send task instructions to Claude Code and monitor execution progress. It serves as a persistent bridge between the two tools, with data isolated per project via project_id. Claude.ai can also read project code directly from GitHub repositories without requiring file sync.
 
 ## User Roles
 
@@ -63,14 +63,17 @@ CoordinatorMCP is a remote MCP server that enables Claude.ai to send task instru
 **Purpose:** Claude Code reports back on task execution status
 
 **What users can do:**
-- Submit a progress report for an instruction with status (in_progress/completed/blocked), summary, and optional details
+- Submit a progress report for an instruction with status (in_progress/completed/blocked), summary, optional details, and optional full_report (detailed report stored in R2)
 - Read progress reports filtered by instruction_id and/or project_id
+- Read the complete full_report for a specific progress report via read_full_report
 
 **Business rules in effect:**
 - Each report is linked to an instruction via instruction_id
 - Reports include project_id for isolation
 - Submitting "completed" status auto-updates the parent instruction
 - Reports are ordered by created_at descending, limited to 20
+- full_report content is stored in R2 at `projects/{project_id}/reports/{report_id}.md` and referenced via full_report_ref in D1
+- read_full_report retrieves the full report content from R2 by report_id
 
 ### File Synchronization
 
@@ -88,6 +91,23 @@ CoordinatorMCP is a remote MCP server that enables Claude.ai to send task instru
 - file_path has a UNIQUE constraint — re-syncing overwrites (UPSERT)
 - sync_file_tree filters out common build/dependency directories
 - All file operations are scoped by project_id
+
+### GitHub Code Reading
+
+**Purpose:** Allow Claude.ai to read project source code directly from GitHub repositories without requiring file sync
+
+**What users can do:**
+- Read the content of a specific file from a GitHub repository (github_read_file) by specifying owner, repo, path, and optional branch
+- List files in a directory of a GitHub repository (github_list_files) by specifying owner, repo, optional path, and optional branch
+- Get the complete file tree of a GitHub repository (github_read_tree) with all file paths and sizes
+
+**Business rules in effect:**
+- Requires a GITHUB_PAT secret configured in Cloudflare Workers
+- All requests go through the GitHub REST API (api.github.com)
+- File content is decoded from base64 automatically
+- Branch defaults to "main" if not specified
+- Owner and repo are required parameters for all 3 tools
+- These tools are read-only — they cannot modify repository content
 
 ### Project Status & Search
 

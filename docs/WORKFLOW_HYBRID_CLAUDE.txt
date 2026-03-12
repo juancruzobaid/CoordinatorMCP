@@ -1,7 +1,7 @@
 =====================================================================
 CLAUDE.AI + CLAUDE CODE HYBRID SYSTEM - PROJECT WORKFLOW
 =====================================================================
-Version: 3.0 - Con CoordinatorMCP + Work Modes
+Version: 4.0 - Con CoordinatorMCP + Work Modes + GitHub API
 =====================================================================
 
 OBJECTIVE:
@@ -59,7 +59,7 @@ objectives, evaluate trade-offs, set direction for the project.
 
 ✅ ALLOWED:
 - Discuss architecture and technical alternatives
-- Read code via CoordinatorMCP (read_file, list_project_files)
+- Read code via GitHub API (github_read_file, github_list_files, github_read_tree)
 - Analyze technical debt and propose solutions
 - Evaluate dependencies, libraries, tools
 - Define project direction and priorities
@@ -86,7 +86,7 @@ PURPOSE: Define steps, order, batch size, pace. Find the balance
 between moving fast and maintaining control of each step.
 
 ✅ ALLOWED:
-- Read code via CoordinatorMCP to understand current state
+- Read code via GitHub API to understand current state
 - Define implementation steps and their order
 - Decide batch size (how many changes per cycle)
 - Define validation criteria for each step
@@ -120,7 +120,7 @@ Creates instructions, monitors progress, provides direction.
 
 ✅ ALLOWED:
 - Create instructions in CoordinatorMCP (create_instruction)
-- Read code via CoordinatorMCP to verify implementations
+- Read code via GitHub API to verify implementations
 - Monitor progress (get_project_status, read_progress)
 - Provide additional guidance if Claude Code reports issues
 - Generate complete code files when needed for instructions
@@ -155,7 +155,7 @@ close the implementation cycle.
 
 ✅ ALLOWED:
 - Read progress reports from CoordinatorMCP
-- Read modified code via CoordinatorMCP (read_file)
+- Read modified code via GitHub API (github_read_file)
 - Verify that changes match the plan
 - Check BUSINESS_LOGIC.md was updated
 - Check IMPLEMENTATION_LOG.md has the entry
@@ -171,7 +171,6 @@ CHECKLIST:
 □ Progress report says "completed"?
 □ BUSINESS_LOGIC.md updated?
 □ IMPLEMENTATION_LOG.md has entry?
-□ Files synced to CoordinatorMCP?
 □ Code changes match the plan?
 □ Ready to commit?
 
@@ -616,6 +615,7 @@ OPERATING RULES FOR CLAUDE.AI:
 - Consult BUSINESS_LOGIC.md before planning any feature that touches existing functionality.
 - Use create_instruction with the project's project_id to send tasks to Claude Code.
 - Use get_project_status to check the state before planning new work.
+- Use github_read_file and github_list_files to read project code directly (owner and repo from PROJECT_CONTEXT.md).
 - Maintain consistency with existing architectural decisions.
 - Generate complete code files, never partial ones.
 - Explain the "why" behind technical decisions.
@@ -756,16 +756,6 @@ INITIALIZATION:
 3. Read the entire docs/BUSINESS_LOGIC.md file
 4. Read the last 5 docs/IMPLEMENTATION_LOG.md file entries
 5. Check CoordinatorMCP: get_pending_instructions with the project's project_id
-6. Check CoordinatorMCP: list_project_files with the project's project_id
-   - If 0 files: this is the FIRST TIME. Run INITIAL FILE SYNC (see below).
-   - If files exist: skip, sync will happen after each task.
-
-INITIAL FILE SYNC (only when list_project_files returns 0):
-- Run sync_file_tree on CoordinatorMCP with the project's project_id
-- Include all source files from the repo (src/, docs/, config files, etc.)
-- Exclude: node_modules/, .next/, .git/, dist/, build/, .env, .dev.vars
-- This creates the initial code snapshot that Claude.ai can read remotely
-- Report: "Initial file sync completed: [N] files uploaded."
 
 CONFIRM:
 "I have read the project context. I understand:
@@ -774,7 +764,6 @@ CONFIRM:
 - Current system capabilities: [summary from BUSINESS_LOGIC.md]
 - Feature in progress: [name]
 - Pending instructions: [count from CoordinatorMCP]
-- Files synced: [count or 'initial sync completed']
 
 I am ready to receive instructions. What should I implement?"
 
@@ -782,12 +771,8 @@ AFTER EACH COMPLETED TASK:
 1. Update docs/IMPLEMENTATION_LOG.md with a new entry (at the BEGINNING of the log)
 2. If applicable, update docs/MASTER_PLAN.md
 3. If the task added or modified functionality, update docs/BUSINESS_LOGIC.md
-4. Sync modified/created files to CoordinatorMCP:
-   - Use sync_files with project_id and ONLY the files that were modified or created
-   - Include the updated docs/ files (IMPLEMENTATION_LOG.md, BUSINESS_LOGIC.md, etc.)
-   - Do NOT re-sync the entire tree, only changed files
-5. Report to CoordinatorMCP: submit_progress with status "completed" and project_id
-6. Report: "Task completed. Docs updated. [N] files synced. Progress reported. Next step?"
+4. Report to CoordinatorMCP: submit_progress with status "completed" and project_id
+5. Hacer commit y push de todos los cambios
 
 IF A TASK IS BLOCKED:
 1. Report to CoordinatorMCP: submit_progress with status "blocked" and details
@@ -800,7 +785,6 @@ RULES:
 - DO NOT improvise new structures without consulting
 - If you find a conflict with the documentation, STOP and report it
 - ALWAYS update logs, without exception
-- ALWAYS sync modified files to CoordinatorMCP after each task
 - BUSINESS_LOGIC.md must always reflect what the system does RIGHT NOW
 - ALWAYS report progress to CoordinatorMCP after completing tasks
 ```
@@ -968,7 +952,7 @@ CLAUDE.AI:
 - Generation of complete code for small/medium tasks
 - Creation of instructions via CoordinatorMCP for large tasks
 - Monitoring progress via CoordinatorMCP
-- Reading project code directly via read_file and list_project_files
+- Reading project code directly from GitHub via github_read_file, github_list_files, github_read_tree
   (no need to ask the developer to paste code)
 - Implementation Audits
 - Maintenance of PROJECT_CONTEXT.md and MASTER_PLAN.md
@@ -977,11 +961,10 @@ CLAUDE.AI:
 
 CLAUDE CODE:
 - Check CoordinatorMCP for pending instructions on startup
-- If first time in project: sync entire file tree to CoordinatorMCP
 - Implementation of tasks according to instructions
 - Automatic updating of IMPLEMENTATION_LOG.md
 - Automatic updating of BUSINESS_LOGIC.md (functional changes only)
-- Sync modified/created files to CoordinatorMCP after each task
+- Commit and push after each completed task
 - Execution of installation/configuration commands
 - Modification of multiple files simultaneously
 - Report progress/completion via CoordinatorMCP submit_progress

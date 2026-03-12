@@ -6,7 +6,7 @@ A unified MCP server that acts as the persistent coordination layer between Clau
 ## Current Project Status
 **Phase:** Production
 **Last Update:** 2026-03-11
-**Version:** 3.0.0
+**Version:** 4.0.0
 
 ## Feature Roadmap
 
@@ -17,10 +17,10 @@ A unified MCP server that acts as the persistent coordination layer between Clau
 - **Main Files:** `wrangler.jsonc`, `src/index.ts`
 - **Endpoints:** `https://mcp.juancruz.com.ar/mcp`
 
-#### MCP Tools Implementation (15 tools) - 2026-03-02
+#### MCP Tools Implementation (19 tools) - 2026-03-02
 - **Description:** Full set of MCP tools for bidirectional Claude.ai ↔ Claude Code communication
 - **Main Files:** `src/index.ts`
-- **Tools:** create_instruction, list_instructions, read_progress, update_instruction, delete_instruction, list_project_files, read_file, send_code_change, update_workflow_docs, get_pending_instructions, submit_progress, sync_files, sync_file_tree, get_project_status, search_history
+- **Tools:** create_instruction, list_instructions, read_progress, read_full_report, update_instruction, delete_instruction, list_project_files, read_file, send_code_change, update_workflow_docs, get_pending_instructions, submit_progress, sync_files, sync_file_tree, get_project_status, search_history, github_read_file, github_list_files, github_read_tree
 
 #### D1 Schema with 3 Tables - 2026-03-02
 - **Description:** Database schema for instructions, progress_reports, and project_files
@@ -39,6 +39,15 @@ A unified MCP server that acts as the persistent coordination layer between Clau
 - **Description:** Both /mcp (Streamable HTTP) and /sse (SSE) endpoints for client compatibility
 - **Main Files:** `src/index.ts` (apiHandlers config)
 
+#### GitHub API Integration for Code Reading - 2026-03-11
+- **Description:** 3 new tools (github_read_file, github_list_files, github_read_tree) so Claude.ai can read code directly from GitHub repos without file sync
+- **Main Files:** `src/index.ts`
+- **Dependencies:** `GITHUB_PAT` secret
+
+#### Enhanced Progress Reports with full_report - 2026-03-11
+- **Description:** submit_progress now accepts optional full_report field stored in R2; new read_full_report tool to retrieve them
+- **Main Files:** `src/index.ts`
+
 ### 🚧 IN PROGRESS
 - None currently
 
@@ -50,7 +59,7 @@ A unified MCP server that acts as the persistent coordination layer between Clau
 
 #### Medium Priority
 - [ ] **Fix package.json name:** Change from "remote-mcp-server-authless" to "coordinatormcp"
-- [ ] **Project documentation:** Generate the 4 standard docs (PROJECT_CONTEXT, MASTER_PLAN, BUSINESS_LOGIC, IMPLEMENTATION_LOG)
+- [ ] **Add .DS_Store and package-lock.json to .gitignore**
 
 #### Low Priority / Nice to Have
 - [ ] **Rate limiting:** Prevent abuse on public-facing MCP endpoints
