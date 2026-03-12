@@ -4,20 +4,28 @@ import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 import GitHubHandler from "./github-handler";
 
-// Helper: generate a short unique ID
 function genId(): string {
   return crypto.randomUUID().slice(0, 8);
 }
 
-// Helper: get current ISO datetime
 function now(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19);
+}
+
+async function githubFetch(env: Env, path: string): Promise<Response> {
+  return fetch(`https://api.github.com${path}`, {
+    headers: {
+      Authorization: `Bearer ${env.GITHUB_PAT}`,
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "CoordinatorMCP",
+    },
+  });
 }
 
 export class MyMCP extends McpAgent {
   server = new McpServer({
     name: "CoordinatorMCP",
-    version: "3.0.0",
+    version: "4.0.0",
   });
 
   async init() {
@@ -25,7 +33,6 @@ export class MyMCP extends McpAgent {
     // TOOLS FOR CLAUDE.AI (Planner)
     // ============================================================
 
-    // --- create_instruction ---
     this.server.tool(
       "create_instruction",
       "Create a new instruction for Claude Code to execute",
@@ -86,7 +93,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- list_instructions ---
     this.server.tool(
       "list_instructions",
       "List instructions filtered by status",
@@ -103,17 +109,14 @@ export class MyMCP extends McpAgent {
         const env = this.env as Env;
         const pid = project_id || "default";
         const filterStatus = status || "all";
-
         let query =
           "SELECT id, title, type, priority, status, created_at, updated_at FROM instructions WHERE project_id = ?";
         if (filterStatus !== "all") {
           query += ` AND status = '${filterStatus}'`;
         }
         query += " ORDER BY created_at DESC LIMIT 50";
-
         const results = await env.COORDINATOR_DB.prepare(query).bind(pid).all();
         const rows = results.results || [];
-
         if (rows.length === 0) {
           return {
             content: [
@@ -124,12 +127,10 @@ export class MyMCP extends McpAgent {
             ],
           };
         }
-
         const lines = rows.map(
           (r: any) =>
             `[${r.id}] ${r.status.toUpperCase()} | ${r.priority} | ${r.title} (${r.updated_at})`,
         );
-
         return {
           content: [
             {
@@ -141,7 +142,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- read_progress ---
     this.server.tool(
       "read_progress",
       "Read progress reports, optionally filtered by instruction ID",
@@ -158,33 +158,36 @@ export class MyMCP extends McpAgent {
       async ({ instruction_id, project_id }) => {
         const env = this.env as Env;
         const pid = project_id || "default";
-
         let query =
           "SELECT pr.id, pr.instruction_id, pr.status, pr.summary, pr.details, pr.created_at, i.title as instruction_title FROM progress_reports pr LEFT JOIN instructions i ON pr.instruction_id = i.id WHERE pr.project_id = ?";
         const binds: any[] = [pid];
-
         if (instruction_id) {
           query += " AND pr.instruction_id = ?";
           binds.push(instruction_id);
         }
         query += " ORDER BY pr.created_at DESC LIMIT 20";
-
         const results = await env.COORDINATOR_DB.prepare(query)
           .bind(...binds)
           .all();
         const rows = results.results || [];
-
         if (rows.length === 0) {
           return {
             content: [{ type: "text", text: "No progress reports found." }],
           };
         }
-
-        const lines = rows.map(
-          (r: any) =>
-            `[${r.id}] for instruction "${r.instruction_title}" [${r.instruction_id}]\n  Status: ${r.status} | ${r.created_at}\n  Summary: ${r.summary}${r.details ? "\n  Details: " + r.details.slice(0, 200) : ""}`,
-        );
-
+        const lines = [];
+        for (const r of rows as any[]) {
+          let fullReportNote = "";
+          const r2Key = `projects/${pid}/reports/${r.id}.md`;
+          const obj = await env.COORDINATOR_BUCKET.get(r2Key);
+          if (obj) {
+            const fullText = await obj.text();
+            fullReportNote = `\n  Full Report (${fullText.length} chars):\n${fullText.slice(0, 1000)}${fullText.length > 1000 ? "\n  ... [truncated, use read_full_report for complete text]" : ""}`;
+          }
+          lines.push(
+            `[${r.id}] for instruction "${r.instruction_title}" [${r.instruction_id}]\n  Status: ${r.status} | ${r.created_at}\n  Summary: ${r.summary}${r.details ? "\n  Details: " + r.details.slice(0, 200) : ""}${fullReportNote}`,
+          );
+        }
         return {
           content: [
             {
@@ -196,7 +199,40 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- update_instruction ---
+    this.server.tool(
+      "read_full_report",
+      "Read the complete full report for a progress report from R2",
+      {
+        report_id: z.string().describe("The progress report ID"),
+        project_id: z
+          .string()
+          .optional()
+          .describe("Project identifier. Defaults to 'default'"),
+      },
+      async ({ report_id, project_id }) => {
+        const env = this.env as Env;
+        const pid = project_id || "default";
+        const r2Key = `projects/${pid}/reports/${report_id}.md`;
+        const obj = await env.COORDINATOR_BUCKET.get(r2Key);
+        if (!obj) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ No full report found for report [${report_id}] in project "${pid}"`,
+              },
+            ],
+          };
+        }
+        const text = await obj.text();
+        return {
+          content: [
+            { type: "text", text: `📋 Full Report [${report_id}]:\n${text}` },
+          ],
+        };
+      },
+    );
+
     this.server.tool(
       "update_instruction",
       "Update an existing instruction's content, priority or status",
@@ -211,7 +247,6 @@ export class MyMCP extends McpAgent {
         const env = this.env as Env;
         const sets: string[] = [];
         const values: any[] = [];
-
         if (title) {
           sets.push("title = ?");
           values.push(title);
@@ -228,30 +263,25 @@ export class MyMCP extends McpAgent {
           sets.push("status = ?");
           values.push(status);
         }
-
         if (sets.length === 0) {
           return {
             content: [{ type: "text", text: "❌ No fields to update." }],
           };
         }
-
         sets.push("updated_at = ?");
         values.push(now());
         values.push(id);
-
         await env.COORDINATOR_DB.prepare(
           `UPDATE instructions SET ${sets.join(", ")} WHERE id = ?`,
         )
           .bind(...values)
           .run();
-
         return {
           content: [{ type: "text", text: `✅ Instruction [${id}] updated.` }],
         };
       },
     );
 
-    // --- delete_instruction ---
     this.server.tool(
       "delete_instruction",
       "Delete an instruction by ID",
@@ -279,7 +309,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- list_project_files ---
     this.server.tool(
       "list_project_files",
       "List synced project files with optional path prefix filter",
@@ -296,22 +325,18 @@ export class MyMCP extends McpAgent {
       async ({ prefix, project_id }) => {
         const env = this.env as Env;
         const pid = project_id || "default";
-
         let query =
           "SELECT file_path, size_bytes, synced_at FROM project_files WHERE project_id = ?";
         const binds: any[] = [pid];
-
         if (prefix) {
           query += " AND file_path LIKE ?";
           binds.push(`${prefix}%`);
         }
         query += " ORDER BY file_path ASC LIMIT 100";
-
         const results = await env.COORDINATOR_DB.prepare(query)
           .bind(...binds)
           .all();
         const rows = results.results || [];
-
         if (rows.length === 0) {
           return {
             content: [
@@ -322,12 +347,10 @@ export class MyMCP extends McpAgent {
             ],
           };
         }
-
         const lines = rows.map(
           (r: any) =>
             `  ${r.file_path} (${r.size_bytes} bytes, synced: ${r.synced_at})`,
         );
-
         return {
           content: [
             {
@@ -339,7 +362,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- read_file ---
     this.server.tool(
       "read_file",
       "Read the content of a synced project file from R2",
@@ -355,13 +377,11 @@ export class MyMCP extends McpAgent {
       async ({ file_path, project_id }) => {
         const env = this.env as Env;
         const pid = project_id || "default";
-
         const row = await env.COORDINATOR_DB.prepare(
           "SELECT r2_key FROM project_files WHERE file_path = ? AND project_id = ?",
         )
           .bind(file_path, pid)
           .first<{ r2_key: string }>();
-
         if (!row) {
           return {
             content: [
@@ -372,7 +392,6 @@ export class MyMCP extends McpAgent {
             ],
           };
         }
-
         const obj = await env.COORDINATOR_BUCKET.get(row.r2_key);
         if (!obj) {
           return {
@@ -384,7 +403,6 @@ export class MyMCP extends McpAgent {
             ],
           };
         }
-
         const text = await obj.text();
         return {
           content: [
@@ -394,7 +412,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- send_code_change ---
     this.server.tool(
       "send_code_change",
       "Send a direct code change instruction (replace_file or replace_lines)",
@@ -434,7 +451,6 @@ export class MyMCP extends McpAgent {
         const id = genId();
         const ts = now();
         const pid = project_id || "default";
-
         const changeDetail = JSON.stringify({
           file_path,
           change_type,
@@ -442,21 +458,17 @@ export class MyMCP extends McpAgent {
           line_start,
           line_end,
         });
-
         const r2Key = `projects/${pid}/instructions/${id}.json`;
         await env.COORDINATOR_BUCKET.put(r2Key, changeDetail);
-
         const title = `Code change: ${change_type} on ${file_path}`;
         const contentText =
           description || `Direct ${change_type} on ${file_path}`;
-
         await env.COORDINATOR_DB.prepare(
           `INSERT INTO instructions (id, title, content, detail_ref, type, priority, status, project_id, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'direct_change', 'high', 'pending', ?, ?, ?)`,
         )
           .bind(id, title, contentText, r2Key, pid, ts, ts)
           .run();
-
         return {
           content: [
             {
@@ -468,7 +480,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- update_workflow_docs ---
     this.server.tool(
       "update_workflow_docs",
       "Create or update a workflow/documentation file in R2",
@@ -499,10 +510,198 @@ export class MyMCP extends McpAgent {
     );
 
     // ============================================================
+    // GITHUB API TOOLS (Read code directly from GitHub repos)
+    // ============================================================
+
+    this.server.tool(
+      "github_read_file",
+      "Read a file from a GitHub repository. Returns the file content decoded from base64.",
+      {
+        owner: z
+          .string()
+          .describe("GitHub username or org (e.g. 'juancruzobaid')"),
+        repo: z.string().describe("Repository name (e.g. 'CoordinatorMCP')"),
+        path: z
+          .string()
+          .describe("File path in the repo (e.g. 'src/index.ts')"),
+        branch: z
+          .string()
+          .optional()
+          .describe("Branch name. Defaults to 'main'"),
+      },
+      async ({ owner, repo, path, branch }) => {
+        const env = this.env as Env;
+        const ref = branch || "main";
+        const response = await githubFetch(
+          env,
+          `/repos/${owner}/${repo}/contents/${path}?ref=${ref}`,
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ GitHub API error (${response.status}): Could not read ${owner}/${repo}/${path} (branch: ${ref})\n${error}`,
+              },
+            ],
+          };
+        }
+        const data = (await response.json()) as {
+          content?: string;
+          encoding?: string;
+          size?: number;
+          type?: string;
+        };
+        if (data.type === "dir") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ "${path}" is a directory, not a file. Use github_list_files instead.`,
+              },
+            ],
+          };
+        }
+        if (!data.content) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ No content returned for ${path}. File may be too large (${data.size} bytes). GitHub API limit is 1MB for content endpoint.`,
+              },
+            ],
+          };
+        }
+        const decoded = atob(data.content.replace(/\n/g, ""));
+        return {
+          content: [
+            {
+              type: "text",
+              text: `📄 ${owner}/${repo}/${path} (branch: ${ref}, ${data.size} bytes):\n\`\`\`\n${decoded}\n\`\`\``,
+            },
+          ],
+        };
+      },
+    );
+
+    this.server.tool(
+      "github_list_files",
+      "List files in a directory of a GitHub repository.",
+      {
+        owner: z.string().describe("GitHub username or org"),
+        repo: z.string().describe("Repository name"),
+        path: z
+          .string()
+          .optional()
+          .describe("Directory path. Defaults to root ('')."),
+        branch: z
+          .string()
+          .optional()
+          .describe("Branch name. Defaults to 'main'"),
+      },
+      async ({ owner, repo, path, branch }) => {
+        const env = this.env as Env;
+        const ref = branch || "main";
+        const dirPath = path || "";
+        const response = await githubFetch(
+          env,
+          `/repos/${owner}/${repo}/contents/${dirPath}?ref=${ref}`,
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ GitHub API error (${response.status}): Could not list ${owner}/${repo}/${dirPath} (branch: ${ref})\n${error}`,
+              },
+            ],
+          };
+        }
+        const data = (await response.json()) as Array<{
+          name: string;
+          path: string;
+          type: string;
+          size: number;
+        }>;
+        if (!Array.isArray(data)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ "${dirPath}" is a file, not a directory. Use github_read_file instead.`,
+              },
+            ],
+          };
+        }
+        const lines = data.map(
+          (item) =>
+            `  ${item.type === "dir" ? "📁" : "📄"} ${item.name}${item.type === "file" ? ` (${item.size} bytes)` : ""}`,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `📂 ${owner}/${repo}/${dirPath || "(root)"} (branch: ${ref}):\n${lines.join("\n")}`,
+            },
+          ],
+        };
+      },
+    );
+
+    this.server.tool(
+      "github_read_tree",
+      "Get the complete file tree of a GitHub repository. Returns all file paths and sizes.",
+      {
+        owner: z.string().describe("GitHub username or org"),
+        repo: z.string().describe("Repository name"),
+        branch: z
+          .string()
+          .optional()
+          .describe("Branch name. Defaults to 'main'"),
+      },
+      async ({ owner, repo, branch }) => {
+        const env = this.env as Env;
+        const ref = branch || "main";
+        const response = await githubFetch(
+          env,
+          `/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`,
+        );
+        if (!response.ok) {
+          const error = await response.text();
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ GitHub API error (${response.status}): Could not read tree for ${owner}/${repo} (branch: ${ref})\n${error}`,
+              },
+            ],
+          };
+        }
+        const data = (await response.json()) as {
+          tree: Array<{ path: string; type: string; size?: number }>;
+          truncated: boolean;
+        };
+        const files = data.tree.filter((item) => item.type === "blob");
+        const lines = files.map(
+          (item) => `  ${item.path} (${item.size || 0} bytes)`,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `🌳 ${owner}/${repo} tree (branch: ${ref}, ${files.length} files):\n${lines.join("\n")}${data.truncated ? "\n⚠️ Tree was truncated (repo has too many files)" : ""}`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ============================================================
     // TOOLS FOR CLAUDE CODE (Implementor)
     // ============================================================
 
-    // --- get_pending_instructions ---
     this.server.tool(
       "get_pending_instructions",
       "Get pending instructions and mark them as in_progress. For Claude Code use.",
@@ -516,15 +715,12 @@ export class MyMCP extends McpAgent {
         const env = this.env as Env;
         const ts = now();
         const pid = project_id || "default";
-
         const results = await env.COORDINATOR_DB.prepare(
           "SELECT id, title, content, detail_ref, type, priority FROM instructions WHERE status = 'pending' AND project_id = ? ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 END, created_at ASC LIMIT 10",
         )
           .bind(pid)
           .all();
-
         const rows = results.results || [];
-
         if (rows.length === 0) {
           return {
             content: [
@@ -535,7 +731,6 @@ export class MyMCP extends McpAgent {
             ],
           };
         }
-
         for (const row of rows as any[]) {
           await env.COORDINATOR_DB.prepare(
             "UPDATE instructions SET status = 'in_progress', updated_at = ? WHERE id = ?",
@@ -543,21 +738,19 @@ export class MyMCP extends McpAgent {
             .bind(ts, row.id)
             .run();
         }
-
         const enriched = [];
         for (const row of rows as any[]) {
           let detail = "";
           if (row.detail_ref) {
             const obj = await env.COORDINATOR_BUCKET.get(row.detail_ref);
             if (obj) {
-              detail = "\n  Detail: " + (await obj.text()).slice(0, 500);
+              detail = "\n  Detail: " + (await obj.text());
             }
           }
           enriched.push(
             `[${row.id}] ${row.priority.toUpperCase()} | ${row.type}\n  Title: ${row.title}\n  Content: ${row.content}${detail}`,
           );
         }
-
         return {
           content: [
             {
@@ -569,7 +762,6 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- submit_progress ---
     this.server.tool(
       "submit_progress",
       "Submit a progress report for an instruction. For Claude Code use.",
@@ -580,24 +772,39 @@ export class MyMCP extends McpAgent {
         status: z.enum(["in_progress", "completed", "blocked"]),
         summary: z.string().describe("Short summary of progress"),
         details: z.string().optional().describe("Detailed progress notes"),
+        full_report: z
+          .string()
+          .optional()
+          .describe(
+            "Complete detailed report stored in R2. Use for error logs, full output, or any extensive information.",
+          ),
         project_id: z
           .string()
           .optional()
           .describe("Project identifier. Defaults to 'default'"),
       },
-      async ({ instruction_id, status, summary, details, project_id }) => {
+      async ({
+        instruction_id,
+        status,
+        summary,
+        details,
+        full_report,
+        project_id,
+      }) => {
         const env = this.env as Env;
         const id = genId();
         const ts = now();
         const pid = project_id || "default";
-
         await env.COORDINATOR_DB.prepare(
           `INSERT INTO progress_reports (id, instruction_id, status, summary, details, project_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(id, instruction_id, status, summary, details || null, pid, ts)
           .run();
-
+        if (full_report) {
+          const r2Key = `projects/${pid}/reports/${id}.md`;
+          await env.COORDINATOR_BUCKET.put(r2Key, full_report);
+        }
         if (status === "completed") {
           await env.COORDINATOR_DB.prepare(
             "UPDATE instructions SET status = 'completed', updated_at = ? WHERE id = ?",
@@ -605,19 +812,17 @@ export class MyMCP extends McpAgent {
             .bind(ts, instruction_id)
             .run();
         }
-
         return {
           content: [
             {
               type: "text",
-              text: `✅ Progress report [${id}] submitted for instruction [${instruction_id}] (status: ${status}, project: ${pid})`,
+              text: `✅ Progress report [${id}] submitted for instruction [${instruction_id}] (status: ${status}, project: ${pid}${full_report ? ", full report saved to R2" : ""})`,
             },
           ],
         };
       },
     );
 
-    // --- sync_files ---
     this.server.tool(
       "sync_files",
       "Sync one or more project files to R2. For Claude Code use.",
@@ -642,24 +847,17 @@ export class MyMCP extends McpAgent {
         const ts = now();
         const pid = project_id || "default";
         const synced: string[] = [];
-
         for (const file of files) {
           const r2Key = `projects/${pid}/files/${file.path}`;
           const size = new TextEncoder().encode(file.content).length;
-
           await env.COORDINATOR_BUCKET.put(r2Key, file.content);
-
           await env.COORDINATOR_DB.prepare(
-            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, project_id, synced_at)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(file_path) DO UPDATE SET r2_key = ?, size_bytes = ?, synced_at = ?`,
+            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, project_id, synced_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(file_path) DO UPDATE SET r2_key = ?, size_bytes = ?, synced_at = ?`,
           )
             .bind(genId(), file.path, r2Key, size, pid, ts, r2Key, size, ts)
             .run();
-
           synced.push(`${file.path} (${size} bytes)`);
         }
-
         return {
           content: [
             {
@@ -671,17 +869,11 @@ export class MyMCP extends McpAgent {
       },
     );
 
-    // --- sync_file_tree ---
     this.server.tool(
       "sync_file_tree",
       "Sync a complete file tree (list of paths with content). For Claude Code use.",
       {
-        files: z.array(
-          z.object({
-            path: z.string(),
-            content: z.string(),
-          }),
-        ),
+        files: z.array(z.object({ path: z.string(), content: z.string() })),
         project_id: z
           .string()
           .optional()
@@ -693,7 +885,6 @@ export class MyMCP extends McpAgent {
         const pid = project_id || "default";
         let totalSize = 0;
         let count = 0;
-
         for (const file of files) {
           if (
             file.path.includes("node_modules/") ||
@@ -704,23 +895,17 @@ export class MyMCP extends McpAgent {
           ) {
             continue;
           }
-
           const r2Key = `projects/${pid}/files/${file.path}`;
           const size = new TextEncoder().encode(file.content).length;
           totalSize += size;
-
           await env.COORDINATOR_BUCKET.put(r2Key, file.content);
           await env.COORDINATOR_DB.prepare(
-            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, project_id, synced_at)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(file_path) DO UPDATE SET r2_key = ?, size_bytes = ?, synced_at = ?`,
+            `INSERT INTO project_files (id, file_path, r2_key, size_bytes, project_id, synced_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(file_path) DO UPDATE SET r2_key = ?, size_bytes = ?, synced_at = ?`,
           )
             .bind(genId(), file.path, r2Key, size, pid, ts, r2Key, size, ts)
             .run();
-
           count++;
         }
-
         return {
           content: [
             {
@@ -736,7 +921,6 @@ export class MyMCP extends McpAgent {
     // SHARED TOOLS
     // ============================================================
 
-    // --- get_project_status ---
     this.server.tool(
       "get_project_status",
       "Get a summary of the project: instruction counts by status, file count, recent activity",
@@ -749,34 +933,28 @@ export class MyMCP extends McpAgent {
       async ({ project_id }) => {
         const env = this.env as Env;
         const pid = project_id || "default";
-
         const instrCounts = await env.COORDINATOR_DB.prepare(
           "SELECT status, COUNT(*) as count FROM instructions WHERE project_id = ? GROUP BY status",
         )
           .bind(pid)
           .all();
-
         const fileCount = await env.COORDINATOR_DB.prepare(
           "SELECT COUNT(*) as count FROM project_files WHERE project_id = ?",
         )
           .bind(pid)
           .first<{ count: number }>();
-
         const recentReports = await env.COORDINATOR_DB.prepare(
           "SELECT pr.summary, pr.status, pr.created_at, i.title FROM progress_reports pr LEFT JOIN instructions i ON pr.instruction_id = i.id WHERE pr.project_id = ? ORDER BY pr.created_at DESC LIMIT 5",
         )
           .bind(pid)
           .all();
-
         const statusMap: Record<string, number> = {};
         for (const row of (instrCounts.results || []) as any[]) {
           statusMap[row.status] = row.count;
         }
-
         const recentLines = ((recentReports.results || []) as any[]).map(
           (r) => `  - [${r.status}] ${r.title}: ${r.summary} (${r.created_at})`,
         );
-
         const summary = [
           `📊 Project Status (${pid}):`,
           `  Instructions: ${statusMap["pending"] || 0} pending, ${statusMap["in_progress"] || 0} in progress, ${statusMap["completed"] || 0} completed`,
@@ -785,12 +963,10 @@ export class MyMCP extends McpAgent {
             ? `\n  Recent Activity:\n${recentLines.join("\n")}`
             : "  No recent activity.",
         ].join("\n");
-
         return { content: [{ type: "text", text: summary }] };
       },
     );
 
-    // --- search_history ---
     this.server.tool(
       "search_history",
       "Search through instructions and progress reports by keyword",
@@ -805,19 +981,16 @@ export class MyMCP extends McpAgent {
         const env = this.env as Env;
         const q = `%${query}%`;
         const pid = project_id || "default";
-
         const instrResults = await env.COORDINATOR_DB.prepare(
           "SELECT id, title, status, created_at FROM instructions WHERE project_id = ? AND (title LIKE ? OR content LIKE ?) LIMIT 10",
         )
           .bind(pid, q, q)
           .all();
-
         const reportResults = await env.COORDINATOR_DB.prepare(
           "SELECT id, instruction_id, summary, created_at FROM progress_reports WHERE project_id = ? AND (summary LIKE ? OR details LIKE ?) LIMIT 10",
         )
           .bind(pid, q, q)
           .all();
-
         const instrLines = ((instrResults.results || []) as any[]).map(
           (r) =>
             `  [Instruction ${r.id}] ${r.status} - ${r.title} (${r.created_at})`,
@@ -826,7 +999,6 @@ export class MyMCP extends McpAgent {
           (r) =>
             `  [Report ${r.id}] for [${r.instruction_id}] - ${r.summary} (${r.created_at})`,
         );
-
         const total = instrLines.length + reportLines.length;
         if (total === 0) {
           return {
@@ -838,7 +1010,6 @@ export class MyMCP extends McpAgent {
             ],
           };
         }
-
         return {
           content: [
             {
@@ -852,7 +1023,6 @@ export class MyMCP extends McpAgent {
   }
 }
 
-// Export the OAuthProvider as the default export
 export default new OAuthProvider({
   apiRoute: "/mcp",
   apiHandlers: {
