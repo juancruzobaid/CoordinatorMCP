@@ -1023,14 +1023,24 @@ export class MyMCP extends McpAgent {
   }
 }
 
-export default new OAuthProvider({
-  apiRoute: "/mcp",
-  apiHandlers: {
-    "/mcp": MyMCP.serve("/mcp"),
-    "/sse": MyMCP.serveSSE("/sse"),
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const url = new URL(request.url);
+    if (url.pathname === "/mcp" || url.pathname === "/sse") {
+      return MyMCP.serve("/mcp").fetch(request, env, ctx);
+    }
+    if (url.pathname === "/" || url.pathname === "/health") {
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          name: "CoordinatorMCP",
+          version: "4.0.0",
+        }),
+        {
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    return new Response("Not found", { status: 404 });
   },
-  defaultHandler: GitHubHandler,
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
-});
+};
