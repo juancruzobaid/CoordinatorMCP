@@ -1024,23 +1024,41 @@ export class MyMCP extends McpAgent {
 }
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
-    if (url.pathname === "/mcp" || url.pathname === "/sse") {
-      return MyMCP.serve("/mcp").fetch(request, env, ctx);
-    }
+
+    // Public endpoints - no auth required
     if (url.pathname === "/" || url.pathname === "/health") {
       return new Response(
         JSON.stringify({
           status: "ok",
           name: "CoordinatorMCP",
-          version: "4.0.0",
+          version: "4.1.0",
         }),
-        {
-          headers: { "content-type": "application/json" },
-        },
+        { headers: { "content-type": "application/json" } },
       );
     }
+
+    // MCP endpoints - require API key in URL param
+    if (url.pathname === "/mcp" || url.pathname === "/sse") {
+      const apiKey = env.MCP_API_KEY;
+
+      if (apiKey) {
+        const providedKey = url.searchParams.get("key");
+        if (!providedKey || providedKey !== apiKey) {
+          return new Response(
+            JSON.stringify({
+              error: "unauthorized",
+              message: "Invalid or missing API key",
+            }),
+            { status: 401, headers: { "content-type": "application/json" } },
+          );
+        }
+      }
+
+      return MyMCP.serve("/mcp").fetch(request, env, ctx);
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
